@@ -9,50 +9,41 @@ def group_throws(clips, previous, radar):
     if not radar:
         return clips, Counter(id(clip) for clip in clips)
 
-    anchors = {"launch": {False: [], True: []}, "impact": {False: [], True: []}}
     representatives = defaultdict(list)
     units = radar["units"]
 
-    def group(point, endpoint):
+    def position(point):
         x, y, z = point
         left = (x - radar["originX"]) / units * 100
         top = (radar["originY"] - y) / units * 100
         if not (0 <= left <= 100 and 0 <= top <= 100):
             return None
         lower = bool(radar["lower"]) and z < radar["thresholdZ"]
-        spots = anchors[endpoint][lower]
-        for index, (anchor_x, anchor_y) in enumerate(spots):
-            if math.hypot(left - anchor_x, top - anchor_y) <= RADAR_GROUP_RADIUS:
-                return lower, index
-        spots.append((left, top))
-        return lower, len(spots) - 1
+        return left, top, lower
 
-    def pair(clip):
-        launch = group(clip["launch"], "launch")
-        impact = group(clip["impact"], "impact")
-        if launch is not None and impact is not None:
-            return clip["kind"], launch, impact
-        return None
+    def close(first, second):
+        x, y, lower = first
+        other_x, other_y, other_lower = second
+        return lower == other_lower and math.hypot(x - other_x, y - other_y) <= RADAR_GROUP_RADIUS
 
     for clip in previous:
-        key = pair(clip)
-        if key is not None:
-            representatives[key].append(clip)
+        launch, impact = position(clip["launch"]), position(clip["impact"])
+        if launch is not None and impact is not None:
+            representatives[clip["kind"]].append((id(clip), launch, impact))
 
     kept = []
     counts = Counter()
     for clip in clips:
-        key = pair(clip)
-        group_clips = representatives.get(key)
-        if not group_clips:
-            kept.append(clip)
-            group_clips = [clip]
-            if key is not None:
-                representatives[key] = group_clips
-        counts[id(group_clips[0])] += 1
-
-    for first, *others in representatives.values():
-        if others and (count := counts[id(first)]):
-            for clip in others:
-                counts[id(clip)] = count
+        launch, impact = position(clip["launch"]), position(clip["impact"])
+        if launch is not None and impact is not None:
+            candidates = representatives[clip["kind"]]
+            # Both endpoints must match the same clip, regardless of the map markers.
+            matches = [candidate for candidate, other_launch, other_impact in candidates
+                       if close(launch, other_launch) and close(impact, other_impact)]
+            if matches:
+                counts.update(matches)
+                continue
+            candidates.append((id(clip), launch, impact))
+        kept.append(clip)
+        counts[id(clip)] += 1
     return kept, counts
