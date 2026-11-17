@@ -118,6 +118,10 @@ dialog p { color: var(--muted); margin-top: 7px; overflow-wrap: anywhere; }
 .zone-button:hover:enabled, .zone-button[aria-pressed="true"] { border-color: var(--accent); }
 .zone-button[aria-pressed="true"] { color: var(--accent); }
 .zone-button:disabled { opacity: .55; cursor: default; }
+.zone-save:enabled { background: #21513a; border-color: #529875; color: #dcf8e6; }
+.zone-save:hover:enabled { background: #2b674a; }
+.zone-cancel:enabled { background: #583719; border-color: #a36a36; color: #ffe5c9; }
+.zone-cancel:hover:enabled { background: #704724; }
 #callout-editor { width: min(990px, 96vw); max-width: none; max-height: 94dvh; padding: 14px; }
 .callout-heading { margin-bottom: 12px; }
 .callout-heading h2 { margin-right: auto; }

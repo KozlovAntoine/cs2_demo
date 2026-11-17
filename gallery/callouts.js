@@ -100,6 +100,7 @@ function initializeCalloutEditor({ matches, currentMatch, currentClip, changed }
     const resume = byId("resume-zone");
     const layerList = byId("zone-layer-list");
     const accept = form.querySelector('button[type="submit"]');
+    const discard = byId("discard-zone");
     const maps = new Map();
     let editing;
     let drag;
@@ -121,10 +122,27 @@ function initializeCalloutEditor({ matches, currentMatch, currentClip, changed }
     ]);
     const pointsText = (points) => points.map((point) => point.join(",")).join(" ");
 
+    function geometryChanged() {
+        return editing?.savedPoints?.some(([x, y], index) => {
+            const [left, top] = editing.points[index];
+            return Math.abs(left - x) > 1e-6 || Math.abs(top - y) > 1e-6;
+        });
+    }
+
+    function hasUnsavedChanges() {
+        return Boolean(editing && (!editing.id || name.value.trim() !== editing.savedName || geometryChanged()));
+    }
+
+    function syncEditButtons() {
+        const editable = !saving && editing?.closed && hasUnsavedChanges();
+        accept.disabled = !editable || !name.value.trim();
+        discard.disabled = !editable;
+    }
+
     function previewZones(zones, radar) {
         if (!editing?.closed) return zones;
         const original = zones.find((zone) => zone.id === editing.id);
-        const area = original && !editing.moved ? original.area : Math.abs(editing.points.reduce((sum, [x, y], index, points) => {
+        const area = original && !geometryChanged() ? original.area : Math.abs(editing.points.reduce((sum, [x, y], index, points) => {
             const [nextX, nextY] = points[(index + 1) % points.length];
             return sum + x * nextY - y * nextX;
         }, 0)) / 2 * (radar.units / 100) ** 2;
@@ -186,7 +204,8 @@ function initializeCalloutEditor({ matches, currentMatch, currentClip, changed }
         resume.hidden = !(creating && editing.closed);
         remove.textContent = confirmDelete ? "Confirmer la suppression" : "Supprimer la zone";
         mapSelect.disabled = floorSelect.disabled = zoneSelect.disabled = newZone.disabled = saving || Boolean(creating);
-        for (const control of [name, accept, remove, resume, byId("discard-zone"), byId("close-callouts")]) control.disabled = saving;
+        for (const control of [name, remove, resume, byId("close-callouts")]) control.disabled = saving;
+        syncEditButtons();
         closeShape.disabled = !editing || editing.points.length < 3;
         undo.disabled = !editing?.points.length;
         help.textContent = drawing ? "Clique pour placer les sommets. Clique sur le premier sommet pour fermer la zone."
@@ -239,7 +258,8 @@ function initializeCalloutEditor({ matches, currentMatch, currentClip, changed }
         }
         const map = maps.get(mapSelect.value);
         const zone = map.zones.find((item) => item.id === id && item.level === floorSelect.value);
-        editing = zone && { id: zone.id, points: project(zone.points, map.radar), closed: true };
+        const savedPoints = zone && project(zone.points, map.radar);
+        editing = zone && { id: zone.id, points: savedPoints.slice(), savedPoints, savedName: zone.name, closed: true };
         name.value = zone?.name ?? "";
         confirmDelete = false;
         status.textContent = "";
@@ -262,7 +282,7 @@ function initializeCalloutEditor({ matches, currentMatch, currentClip, changed }
         const map = maps.get(mapSelect.value);
         const id = editing.id;
         const { radar } = map;
-        const points = !id || editing.moved ? editing.points.map(([left, top]) => [
+        const points = !id || geometryChanged() ? editing.points.map(([left, top]) => [
             radar.originX + left / 100 * radar.units, radar.originY - top / 100 * radar.units,
         ]) : undefined;
         saving = true;
@@ -328,11 +348,12 @@ function initializeCalloutEditor({ matches, currentMatch, currentClip, changed }
     });
     const cancel = () => chooseZone(editing?.id);
     byId("cancel-zone").addEventListener("click", cancel);
-    byId("discard-zone").addEventListener("click", cancel);
+    discard.addEventListener("click", cancel);
+    name.addEventListener("input", syncEditButtons);
     byId("close-callouts").addEventListener("click", () => dialog.close());
     dialog.addEventListener("close", () => chooseZone(""));
     dialog.addEventListener("cancel", (event) => {
-        const editingShape = editing && (!editing.id || editing.moved || drag);
+        const editingShape = hasUnsavedChanges() || drag;
         if (saving || editingShape) event.preventDefault();
         if (editingShape && !saving) cancel();
     });
@@ -450,8 +471,7 @@ function initializeCalloutEditor({ matches, currentMatch, currentClip, changed }
     });
     function endDrag(event) {
         if (drag?.pointer !== event.pointerId) return;
-        if (event.type === "pointerup") editing.moved ||= drag.point.some((value, index) => value !== editing.points[drag.index][index]);
-        else editing.points[drag.index] = drag.point;
+        if (event.type !== "pointerup") editing.points[drag.index] = drag.point;
         drag = undefined;
         overlay.classList.remove("dragging");
         status.textContent = "";
@@ -480,7 +500,7 @@ function initializeCalloutEditor({ matches, currentMatch, currentClip, changed }
     });
     form.addEventListener("submit", (event) => {
         event.preventDefault();
-        update("save");
+        if (editing?.closed && hasUnsavedChanges() && name.value.trim()) update("save");
     });
     remove.addEventListener("click", () => {
         if (confirmDelete) update("delete");

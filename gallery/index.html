@@ -121,14 +121,14 @@
         <div id="draw-zone-actions" class="zone-actions" hidden>
           <button id="undo-vertex" class="zone-button" type="button">Retirer le dernier point</button>
           <button id="close-zone-shape" class="zone-button" type="button">Fermer le tracé</button>
-          <button id="cancel-zone" class="zone-button" type="button">Annuler</button>
+          <button id="cancel-zone" class="zone-button zone-cancel" type="button">Annuler</button>
         </div>
         <form id="save-zone" hidden>
           <label>Nom <input id="zone-name" maxlength="64" required></label>
           <div class="zone-actions">
-            <button class="zone-button" type="submit">Enregistrer</button>
+            <button class="zone-button zone-save" type="submit" disabled>Enregistrer</button>
             <button id="resume-zone" class="zone-button" type="button" hidden>Reprendre le tracé</button>
-            <button id="discard-zone" class="zone-button" type="button">Annuler</button>
+            <button id="discard-zone" class="zone-button zone-cancel" type="button" disabled>Annuler</button>
             <button id="delete-zone" class="delete-clip" type="button">Supprimer la zone</button>
           </div>
         </form>
