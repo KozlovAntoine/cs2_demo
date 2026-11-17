@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Utilitaires CS2</title>
+  <link rel="stylesheet" href="gallery.css">
+  <script defer src="catalogue.js"></script>
+  <script defer src="callouts.js"></script>
+  <script defer src="gallery.js"></script>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>Utilitaires CS2</h1>
+        <p id="demo-name"></p>
+      </div>
+      <div class="map-controls">
+        <label for="match"><span id="match-label">Démo</span> <select id="match"></select></label>
+        <button id="edit-callouts" class="zone-button" type="button" hidden>Éditer les zones</button>
+      </div>
+    </header>
+    <p id="library-empty" class="library-message" hidden>Aucune vidéo dans la vidéothèque. Lance un export pour ajouter tes premiers clips.</p>
+    <div id="library-content">
+    <div class="toolbar">
+      <div id="types" role="group" aria-label="Filtrer par utilitaire"></div>
+      <div class="toolbar-filters">
+        <button id="favorites" type="button" aria-pressed="false" hidden>Favoris</button>
+        <button id="unwatched" type="button" aria-pressed="false" hidden>À traiter</button>
+        <label id="frequency-control" for="frequency" hidden>Fréquence <select id="frequency"><option value="">Toutes</option></select></label>
+        <label for="round">Round <select id="round"></select></label>
+      </div>
+    </div>
+    <div class="workspace">
+      <section class="panel" aria-labelledby="radar-title">
+        <div class="section-bar">
+          <h2 id="radar-title">Radar</h2>
+          <label for="point" class="control">Points <select id="point">
+            <option value="impact">Activation</option><option value="launch">Départ</option>
+          </select></label>
+          <label for="level" class="control" id="level-control" hidden>Niveau <select id="level">
+            <option value="upper">Haut</option><option value="lower">Bas</option>
+          </select></label>
+        </div>
+        <div class="radar radar-viewport" id="radar">
+          <div id="radar-content" class="radar-content">
+            <img id="radar-image" alt="Radar de la carte" draggable="false">
+            <div id="radar-routes" aria-label="Départs et activations des lancers sélectionnés"></div>
+            <div id="points" aria-label="Lancers sur le radar"></div>
+          </div>
+          <p id="radar-empty" hidden>Radar indisponible pour cette carte.</p>
+          <div class="radar-zoom" role="group" aria-label="Zoom du radar">
+            <button type="button" data-zoom="out" aria-label="Réduire le zoom">−</button>
+            <output aria-label="Zoom actuel">100 %</output>
+            <button type="button" data-zoom="in" aria-label="Augmenter le zoom">+</button>
+          </div>
+        </div>
+      </section>
+      <div class="details">
+        <section class="panel" aria-labelledby="clip-title">
+          <div class="section-bar"><h2 id="clip-title">Clip</h2><span id="clip-meta"></span></div>
+          <div class="player">
+            <video id="video" controls playsinline preload="metadata" hidden></video>
+            <p id="video-empty" role="status"></p>
+          </div>
+          <div id="clip-actions" class="clip-actions" hidden>
+            <button id="portrait-action" type="button">Générer vidéo 9:16</button>
+            <button id="delete-clip" class="delete-clip" type="button" hidden>Supprimer</button>
+            <button id="favorite-clip" class="favorite-button" type="button" aria-pressed="false" hidden>☆</button>
+            <div id="throw-controls" class="throw-controls" hidden>
+              <span id="throw-controls-label" class="lineup-label">Commandes</span>
+              <div id="throw-keys" class="throw-keys" role="group" aria-labelledby="throw-controls-label"></div>
+            </div>
+            <p id="portrait-status" role="status"></p>
+          </div>
+          <p id="delete-status" class="delete-status" role="status" hidden></p>
+        </section>
+        <section id="throw-console" class="panel throw-console" aria-labelledby="throw-console-title" hidden>
+          <h2 id="throw-console-title" class="lineup-label">Console CS2</h2>
+          <div class="console-command" id="console-command" hidden>
+            <code id="throw-command"></code>
+            <button id="copy-command" type="button" aria-label="Copier les commandes CS2">
+              <span class="copy-icon" aria-hidden="true"></span>Copier
+            </button>
+          </div>
+          <p id="copy-status" role="status"></p>
+        </section>
+        <section class="panel" aria-labelledby="list-title">
+          <div class="section-bar"><h2 id="list-title">Lancers</h2><span id="count" aria-live="polite"></span></div>
+          <p id="clip-state-error" class="delete-status" role="alert" hidden></p>
+          <div id="clips" class="clip-list" aria-label="Clips filtrés"></div>
+        </section>
+      </div>
+    </div>
+    </div>
+  </main>
+  <dialog id="callout-editor" aria-labelledby="callout-title">
+    <div class="callout-heading">
+      <h2 id="callout-title">Zones de callout</h2>
+      <a href="https://steamcommunity.com/sharedfiles/filedetails/?l=french&amp;id=2721539148" target="_blank" rel="noopener noreferrer">Guide Steam ↗</a>
+      <button id="close-callouts" class="zone-button" type="button">Fermer</button>
+    </div>
+    <div class="callout-workspace">
+      <div id="callout-radar" class="callout-radar radar-viewport">
+        <div id="callout-radar-content" class="radar-content">
+          <img id="callout-radar-image" alt="Radar de la carte" draggable="false">
+          <svg id="callout-overlay" viewBox="0 0 100 100" aria-label="Zones et sommets sur le radar" role="img"></svg>
+        </div>
+        <div class="radar-zoom" role="group" aria-label="Zoom de l’éditeur">
+          <button type="button" data-zoom="out" aria-label="Réduire le zoom">−</button>
+          <output aria-label="Zoom actuel">100 %</output>
+          <button type="button" data-zoom="in" aria-label="Augmenter le zoom">+</button>
+        </div>
+      </div>
+      <div class="callout-sidebar">
+        <label>Carte <select id="callout-map"></select></label>
+        <label id="callout-floor-control" hidden>Niveau <select id="callout-floor"><option value="upper">Haut</option><option value="lower">Bas</option></select></label>
+        <button id="new-zone" class="zone-button" type="button">Nouvelle zone</button>
+        <label id="callout-zone-control">Zone <select id="callout-zone"></select></label>
+        <div id="draw-zone-actions" class="zone-actions" hidden>
+          <button id="undo-vertex" class="zone-button" type="button">Retirer le dernier point</button>
+          <button id="close-zone-shape" class="zone-button" type="button">Fermer le tracé</button>
+          <button id="cancel-zone" class="zone-button" type="button">Annuler</button>
+        </div>
+        <form id="save-zone" hidden>
+          <label>Nom <input id="zone-name" maxlength="64" required></label>
+          <div class="zone-actions" role="group" aria-label="Superposition de la zone">
+            <button id="zone-front" class="zone-button" type="button" aria-pressed="false">Premier plan</button>
+            <button id="zone-back" class="zone-button" type="button" aria-pressed="false">Arrière-plan</button>
+          </div>
+          <div class="zone-actions">
+            <button class="zone-button" type="submit">Enregistrer</button>
+            <button id="resume-zone" class="zone-button" type="button" hidden>Reprendre le tracé</button>
+            <button id="discard-zone" class="zone-button" type="button">Annuler</button>
+            <button id="delete-zone" class="delete-clip" type="button">Supprimer la zone</button>
+          </div>
+        </form>
+        <p id="callout-help"></p>
+        <p id="callout-status" role="status"></p>
+      </div>
+    </div>
+  </dialog>
+  <dialog id="confirm-delete" aria-labelledby="delete-title">
+    <form method="dialog">
+      <h2 id="delete-title">Supprimer ce clip ?</h2>
+      <p id="delete-description"></p>
+      <p>Le MP4 sera supprimé de ce PC.</p>
+      <div class="dialog-actions">
+        <button value="cancel" autofocus>Annuler</button>
+        <button class="delete-clip" value="delete">Supprimer le MP4</button>
+      </div>
+    </form>
+  </dialog>
+</body>
+</html>

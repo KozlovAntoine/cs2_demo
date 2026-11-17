@@ -1,0 +1,31 @@
+# Local tools, browser profiles and generated galleries
+/.local/
+/exports/
+/cs-demo-manager/
+
+# Python environments and caches
+/.venv/
+/venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local settings and editor files
+.env
+.env.*
+!.env.example
+/.vscode/
+/.idea/
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Demos, recordings and backups
+*.dem
+*.mp4
+*.rar
+*.7z
+*.zip
+*.log

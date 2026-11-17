@@ -1,0 +1,406 @@
+import argparse
+import json
+import os
+import re
+import shutil
+import struct
+import subprocess
+import sys
+import tempfile
+import webbrowser
+from collections import Counter
+from contextlib import contextmanager
+from pathlib import Path, PurePosixPath
+
+from clip_library import CATALOGUE_PREFIX, library_catalogue, record_throw_usage
+from grenade_data import KINDS, read_clips
+from throw_groups import RADAR_GROUP_RADIUS, group_throws
+from throw_inputs import add_throw_inputs
+
+
+ROOT = Path(__file__).resolve().parent
+CALIBRATION = json.loads((ROOT / "radars.json").read_text(encoding="utf-8"))
+
+
+def run(command, **options):
+    if sys.stdout is None and os.name == "nt":
+        options.setdefault("creationflags", subprocess.CREATE_NO_WINDOW)
+        options.setdefault("stdin", subprocess.DEVNULL)
+        if not options.get("capture_output"):
+            options.setdefault("stdout", subprocess.DEVNULL)
+            options.setdefault("stderr", subprocess.PIPE)
+    return subprocess.run(command, check=True, **options)
+
+
+def find_csdm(installation):
+    if installation:
+        folders = [installation]
+    else:
+        on_path = shutil.which("csdm.cmd")
+        folders = [Path(on_path).parent] if on_path else []
+        local = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+        folders.append(local / "Programs" / "CS Demo Manager")
+        folders.extend(Path(os.environ[key]) / "CS Demo Manager"
+                       for key in ("ProgramW6432", "ProgramFiles", "ProgramFiles(x86)") if os.environ.get(key))
+        folders.append(ROOT / ".local" / "csdm")
+    for folder in folders:
+        resources = folder / "resources"
+        if ((folder / "cs-demo-manager.exe").is_file() and (resources / "app.asar").exists()
+                and (resources / "static" / "csda.exe").is_file()):
+            return folder.resolve()
+    raise ValueError("Installe CS Demo Manager 3.21.0 ou indique son dossier avec --csdm.")
+
+
+def csdm(installation, *args, **options):
+    env = dict(os.environ, ELECTRON_RUN_AS_NODE="1")
+    return run([installation / "cs-demo-manager.exe", installation / "resources" / "app.asar" / "cli.js", *args],
+               env=env, **options)
+
+
+def seven_zip_command():
+    if command := shutil.which("7z"):
+        return command
+    for key in ("ProgramW6432", "ProgramFiles", "ProgramFiles(x86)"):
+        if folder := os.environ.get(key):
+            command = Path(folder) / "7-Zip" / "7z.exe"
+            if command.is_file():
+                return command
+    raise ValueError("7-Zip est requis pour ouvrir une archive .rar.")
+
+
+def describe_archive(path):
+    result = run([seven_zip_command(), "l", "-ba", "-slt", "-sccUTF-8", path], capture_output=True,
+                 encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL, timeout=20)
+    members = set()
+    for line in result.stdout.splitlines():
+        if line.startswith("Path = "):
+            member = PurePosixPath(line.removeprefix("Path = ").replace("\\", "/"))
+            if member.suffix.lower() == ".dem" and not member.is_absolute() and ".." not in member.parts:
+                members.add(member.as_posix())
+    if not members:
+        raise ValueError("Cette archive ne contient aucune démo .dem.")
+    return sorted(members)
+
+
+def load_demos(source, work, map_filter, member=None):
+    demos = work / "demos"
+    demos.mkdir()
+    if source.suffix.lower() == ".dem":
+        path = demos / source.name
+        try:
+            os.link(source, path)
+        except OSError:
+            shutil.copyfile(source, path)
+        return [path]
+    if source.suffix.lower() != ".rar":
+        raise ValueError("Sélectionne un fichier .dem ou une archive .rar.")
+    command = [seven_zip_command(), "x", "-y", f"-o{demos}"]
+    if member:
+        member_filter = member.replace("/", os.sep)
+        command.extend(["-spd", source, "--", member_filter])
+    else:
+        command.extend([source, "*.dem", "-r"])
+    run(command)
+    found = sorted(path for path in demos.rglob("*") if path.suffix.lower() == ".dem" and path.is_file()
+                   and path.resolve().is_relative_to(demos))
+    if map_filter:
+        found = [path for path in found if map_filter.casefold() in path.stem.casefold()]
+    if member:
+        found = [path for path in found if path.relative_to(demos).as_posix() == member]
+    if not found:
+        raise ValueError("Aucune démo ne correspond à la sélection.")
+    return found
+
+
+def radar_layout(map_name, installation):
+    if installation is None or map_name not in CALIBRATION:
+        return None
+    origin_x, origin_y, scale, threshold_z = CALIBRATION[map_name]
+    assets = installation / "resources" / "static" / "images" / "maps" / "cs2" / "radars"
+    upper = assets / f"{map_name}.png"
+    if not upper.is_file():
+        return None
+    lower = assets / f"{map_name}_lower.png"
+    with upper.open("rb") as image:
+        image.seek(16)  # Width in the PNG IHDR chunk.
+        size = struct.unpack(">I", image.read(4))[0]
+    return {"originX": origin_x, "originY": origin_y, "units": scale * size, "thresholdZ": threshold_z,
+            "upper": upper, "lower": lower if lower.is_file() else None}
+
+
+def publish_radar(radar, out):
+    if not radar:
+        return None
+    radars = out / "radars"
+    radars.mkdir(exist_ok=True)
+    published = radar.copy()
+    for level in ("upper", "lower"):
+        if asset := radar[level]:
+            shutil.copyfile(asset, radars / asset.name)
+            published[level] = f"radars/{asset.name}"
+    return published
+
+
+def create_video_job(demo, clips, tick_rate, job_folder):
+    job_folder.mkdir()
+    render_folder = job_folder / "video"
+    render_folder.mkdir()
+    script = job_folder / "camera.js"
+    camera_data = [{key: clip[key] for key in ("launchTick", "activationTick", "endTick", "flight", "impact", "yaw")}
+                   for clip in clips]
+    script.write_text("{\nconst grenadeClips = " + json.dumps(camera_data, separators=(",", ":"), allow_nan=False) + ";\n"
+                      + (ROOT / "follow-grenade.js").read_text(encoding="utf-8") + "\n}\n", encoding="utf-8")
+    sequences = []
+    for number, clip in enumerate(clips, 1):
+        start = clip["startTick"]
+        launch = clip["launchTick"]
+        cfg = "\n".join([
+            f'mirv_script_load "{script.as_posix()}"',
+            f"mirv_script_exec globalThis.csUtilityVideo({number})",
+            "mirv_cmd clear",
+            "cl_demo_freecam 0",
+            f'mirv_cmd addAtTick {launch} "spec_mode 6"',
+        ])
+        sequences.append({
+            "number": number, "startTick": start, "endTick": clip["endTick"], "cfg": cfg,
+            "playerCameras": [{"tick": start - tick_rate // 2, "playerSteamId": clip["steamId"],
+                               "playerName": clip["player"]}],
+            "cameras": [], "playersOptions": [], "showXRay": False, "showAssists": True,
+            "showOnlyDeathNotices": False, "deathNoticesDuration": 5, "recordAudio": True,
+            "playerVoicesEnabled": False,
+        })
+    config = {
+        "demoPath": str(demo), "outputFolderPath": str(render_folder), "recordingSystem": "HLAE",
+        "recordingOutput": "video", "encoderSoftware": "FFmpeg", "width": 1280, "height": 720,
+        "framerate": 60, "closeGameAfterRecording": True, "concatenateSequences": False,
+        "trueView": False, "sequences": sequences,
+        "ffmpegSettings": {"customLocationEnabled": False, "customExecutableLocation": "", "audioBitrate": 192,
+                           "constantRateFactor": 20, "videoCodec": "libx264", "audioCodec": "aac",
+                           "videoContainer": "mp4", "inputParameters": "", "outputParameters": ""},
+    }
+    config_path = job_folder / "csdm-video.json"
+    config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
+    return config_path, render_folder
+
+
+def sequence_videos(render_folder):
+    return {file.name: file for file in render_folder.rglob("sequence-*.mp4")}
+
+
+def find_sequence_video(videos, number, clip):
+    name = f"sequence-{number}-tick-{clip['startTick']}-to-{clip['endTick']}.mp4"
+    video = videos.get(name)
+    if video is None or not video.stat().st_size:
+        raise ValueError(f"CS Demo Manager n’a pas livré le clip {number}.")
+    return video
+
+
+def publish_videos(render_folder, clips, out, map_number):
+    videos = sequence_videos(render_folder)
+    sources = [find_sequence_video(videos, number, clip) for number, clip in enumerate(clips, 1)]
+    clips_dir = out / "clips"
+    clips_dir.mkdir(exist_ok=True)
+    for number, (clip, source) in enumerate(zip(clips, sources), 1):
+        destination = clips_dir / f"m{map_number}-{number:04d}-{clip['kind']}.mp4"
+        shutil.move(source, destination)
+        clip["video"] = destination.relative_to(out).as_posix()
+
+
+def publish_gallery(out, source, matches):
+    for file_name in ("index.html", "gallery.css", "gallery.js", "callouts.js"):
+        shutil.copyfile(ROOT / "gallery" / file_name, out / file_name)
+    catalogue = {"title": source.name, "groupRadius": RADAR_GROUP_RADIUS, "matches": matches}
+    temporary = out / ".catalogue.js.tmp"
+    try:
+        temporary.write_text(CATALOGUE_PREFIX + json.dumps(catalogue, ensure_ascii=True) + ";\n", encoding="utf-8")
+        temporary.replace(out / "catalogue.js")
+    finally:
+        temporary.unlink(missing_ok=True)
+    return out / "index.html"
+
+
+def analyze_demo(installation, demo, kind, work):
+    with tempfile.TemporaryDirectory(dir=work) as temp:
+        analyzer = installation / "resources" / "static" / "csda.exe"
+        run([analyzer, f"-demo-path={demo}", f"-output={temp}", "-format=csdm", "-positions"])
+        return read_clips(Path(temp), demo, kind)
+
+
+def record_video(installation, demo, config, before_capture, log=None):
+    capture = {"stderr": subprocess.PIPE} if log else {}
+    analysis = csdm(installation, "analyze", demo, "--json", stdout=subprocess.PIPE, encoding="utf-8", **capture)
+    if json.loads(analysis.stdout)["failed"]:
+        raise ValueError(f"L’analyse CS Demo Manager a échoué pour {demo.name}.")
+    before_capture()
+    if log is None:
+        csdm(installation, "video", "--config-file", config)
+        return
+    with log.open("w+b") as content:
+        try:
+            csdm(installation, "video", "--config-file", config, stdout=content, stderr=subprocess.STDOUT)
+        except subprocess.CalledProcessError as error:
+            content.seek(0, os.SEEK_END)
+            content.seek(max(0, content.tell() - 64 * 1024))
+            error.output = content.read()
+            raise
+
+
+@contextmanager
+def reserve_export(output):
+    with (output / ".utility-export.lock").open("a+b") as lock:
+        try:
+            if os.name == "nt":
+                import msvcrt
+                msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as error:
+            raise ValueError("Un export utilise déjà cette vidéothèque.") from error
+        yield
+
+
+def generate(args, report=None):
+    output = args.output.resolve()
+    output.mkdir(parents=True, exist_ok=True)
+    with reserve_export(output):
+        return generate_export(args, output, report)
+
+
+def remove_work_directory(path, parent):
+    if path.parent != parent or path.resolve() != path:
+        raise ValueError("Dossier de travail invalide.")
+    shutil.rmtree(path)
+
+
+def release_staged_demo(demo, work):
+    if demo.is_relative_to(work / "demos") and demo.resolve() == demo:
+        demo.unlink(missing_ok=True)
+
+
+def export_demos(args, source, installation, out, work, update, from_app):
+    if source.suffix.lower() == ".rar":
+        update("Extraction", f"Extraction des démos de {source.name}…")
+    demos = load_demos(source, work, args.map, getattr(args, "demo_member", None))
+    matches = []
+    gallery = None
+    duplicate_count = 0
+    for map_number, demo in enumerate(demos, 1):
+        progress = f"{map_number}/{len(demos)}"
+        update("Analyse", f"Démo {progress} · {demo.name}")
+        map_name, tick_rate, clips, checksum = analyze_demo(installation, demo, args.type, work)
+        if not clips:
+            update("Analyse", f"{map_name} : aucun lancer correspondant.")
+            if not args.prepare:
+                release_staged_demo(demo, work)
+            continue
+        radar = radar_layout(map_name, installation)
+        existing = next((item for item in library_catalogue(out.parent)["matches"] if item["map"] == map_name), {})
+        previous = [*existing.get("clips", ()),
+                    *(clip for match in matches if match["map"] == map_name for clip in match["clips"])]
+        unique, usage_counts = group_throws(clips, previous, existing.get("radar") or radar)
+        skipped = len(clips) - len(unique)
+        duplicate_count += skipped
+        if skipped:
+            update("Analyse", f"{map_name} · {skipped} {'doublon ignoré' if skipped == 1 else 'doublons ignorés'}.")
+        if not args.prepare:
+            for clip in previous:
+                count = usage_counts[id(clip)]
+                if count:
+                    folder = out.parent / clip["exportId"] if "exportId" in clip else out
+                    record_throw_usage(folder, Path(clip["video"]).name, checksum, count)
+        clips = unique[:args.limit]
+        if not clips:
+            if not args.prepare:
+                release_staged_demo(demo, work)
+            continue
+        try:
+            add_throw_inputs(demo, clips, tick_rate)
+        except Exception as error:
+            update("Analyse", f"Commandes de lancer indisponibles pour {demo.name} · {error}")
+        counts = Counter(clip["kind"] for clip in clips)
+        estimates = sum(clip["estimated"] for clip in clips)
+        update("Analyse", f"{map_name} : {len(clips)} {'clip' if len(clips) == 1 else 'clips'} "
+               f"({', '.join(f'{name} {count}' for name, count in sorted(counts.items()))})"
+               f", {estimates} fins estimées.")
+        config, render_folder = create_video_job(demo, clips, tick_rate, work / f"map-{map_number}")
+        if not args.prepare:
+            def before_capture():
+                update("Capture", f"Démo {progress} · CS2 enregistre {len(clips)} "
+                       f"{'clip' if len(clips) == 1 else 'clips'} sur {map_name}.")
+
+            record_video(installation, demo, config, before_capture, config.parent / "capture.log" if from_app else None)
+            update("Export", f"Démo {progress} · Ajout des MP4 à la galerie.")
+            publish_videos(render_folder, clips, out, map_number)
+            for clip in clips:
+                record_throw_usage(out, Path(clip["video"]).name, checksum, usage_counts[id(clip)])
+        else:
+            update("Préparation", f"Configuration : {config}")
+        for clip in clips:
+            del clip["flight"], clip["yaw"], clip["steamId"]
+            clip["duration"] = round((clip["endTick"] - clip["startTick"]) / tick_rate, 1)
+        matches.append({"map": map_name, "demo": demo.name, "radar": publish_radar(radar, out),
+                        "clips": clips})
+        gallery = publish_gallery(out, source, matches)
+        if not args.prepare:
+            remove_work_directory(config.parent, work)
+            release_staged_demo(demo, work)
+    return gallery, duplicate_count
+
+
+def generate_export(args, output, report):
+    def update(phase, message):
+        if report is not None:
+            report(phase, message)
+        else:
+            print(message, flush=True)
+
+    source = args.demo.resolve(strict=True)
+    installation = find_csdm(args.csdm)
+    prefix = re.sub(r"[^a-zA-Z0-9_-]", "-", source.stem)[:64] + "-"
+    out = Path(tempfile.mkdtemp(prefix=prefix, dir=output))
+    work = out / "work"
+    work.mkdir()
+    gallery = None
+    try:
+        update("Préparation", f"Dossier de la galerie : {out}")
+        gallery, duplicate_count = export_demos(args, source, installation, out, work, update, report is not None)
+    finally:
+        if not args.prepare or gallery is None:
+            remove_work_directory(work, out)
+            if not any(out.iterdir()):
+                out.rmdir()
+    if gallery is None:
+        if duplicate_count:
+            update("Terminé", "Aucun nouveau clip à générer. Les lancers correspondent déjà à la vidéothèque.")
+            return None
+        raise ValueError("Aucun lancer correspondant au filtre dans les démos sélectionnées.")
+    update("Terminé", f"Galerie : {gallery}")
+    if not args.no_open:
+        webbrowser.open(gallery.as_uri())
+    return gallery
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Génère des clips de grenades CS2 et leur galerie locale.")
+    parser.add_argument("demo", type=Path, help="Démo GOTV .dem ou archive HLTV .rar")
+    parser.add_argument("--type", choices=["all", *dict.fromkeys(KINDS.values())], default="all")
+    parser.add_argument("--map", help="Partie du nom de fichier .dem à sélectionner dans l’archive")
+    parser.add_argument("--output", type=Path, default=ROOT / "exports", help="Dossier parent des galeries")
+    parser.add_argument("--csdm", type=Path, help="Dossier d’installation de CS Demo Manager")
+    parser.add_argument("--prepare", action="store_true", help="Prépare les séquences et le radar sans lancer CS2")
+    parser.add_argument("--limit", type=int, help="Limite de lancers par carte pour un essai")
+    parser.add_argument("--no-open", action="store_true", help="N’ouvre pas le navigateur après export")
+    args = parser.parse_args()
+    if args.limit is not None and args.limit < 1:
+        parser.error("--limit doit être au moins égal à 1.")
+    try:
+        generate(args)
+    except (OSError, ValueError, subprocess.CalledProcessError) as error:
+        print(f"Échec : {error}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
