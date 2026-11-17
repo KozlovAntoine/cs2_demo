@@ -49,8 +49,12 @@ select { color: #eef0f2; max-width: min(56vw, 270px); }
 .radar-zoom output { min-width: 49px; padding: 0 4px; text-align: center; font-size: .78rem; font-variant-numeric: tabular-nums; }
 .radar-viewport.can-pan { touch-action: none; cursor: grab; }
 .radar-viewport.panning, .radar-viewport.panning * { cursor: grabbing !important; }
-.radar img, #points, #radar-routes { position: absolute; inset: 0; width: 100%; height: 100%; }
+.radar img, #points, #radar-routes, #radar-heatmap { position: absolute; inset: 0; width: 100%; height: 100%; }
 .radar img { object-fit: fill; }
+#radar-heatmap, #heatmap-empty { pointer-events: none; }
+.heatmap-legend { padding: 9px 13px; border-top: 1px solid var(--edge); color: var(--muted); font-size: .78rem; }
+.heatmap-scale { display: block; height: 8px; border-radius: 4px; }
+.heatmap-ticks { display: flex; justify-content: space-between; margin-top: 4px; }
 .radar p, .player p { position: absolute; inset: 0; display: grid; place-items: center; padding: 16px; color: var(--muted); text-align: center; }
 .marker { position: absolute; z-index: 1; transform: translate(-50%, -50%) scale(var(--radar-inverse, 1)); display: grid; place-items: center; width: 13px; height: 13px; padding: 0; border: 1px solid #172027; border-radius: 50%; background: var(--tint); box-shadow: 0 0 0 1px #101418a0; color: #11161a; font-size: 10px; font-weight: 800; }
 .marker.cluster { z-index: 2; width: 28px; height: 28px; font-size: 11px; }

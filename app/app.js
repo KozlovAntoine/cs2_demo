@@ -262,6 +262,11 @@ byId("back").addEventListener("click", () => {
 });
 byId("library-link").addEventListener("click", () => openLibrary());
 window.addEventListener("popstate", () => renderRoute());
+document.addEventListener("keydown", (event) => {
+    if (galleryPath === "/library/index.html" && !byId("gallery-view").hidden) {
+        gallery.contentWindow.handleLibraryShortcut?.(event);
+    }
+});
 gallery.addEventListener("load", () => {
     const heading = gallery.contentDocument?.querySelector("main > header h1");
     if (heading && !galleryPath?.startsWith("/library/")) heading.hidden = true;

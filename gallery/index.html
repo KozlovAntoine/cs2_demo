@@ -42,19 +42,26 @@
           <label for="level" class="control" id="level-control" hidden>Niveau <select id="level">
             <option value="upper">Haut</option><option value="lower">Bas</option>
           </select></label>
+          <button id="heatmap-toggle" class="zone-button" type="button" aria-controls="radar-heatmap" aria-pressed="false" hidden>Heatmap</button>
         </div>
         <div class="radar radar-viewport" id="radar">
           <div id="radar-content" class="radar-content">
             <img id="radar-image" alt="Radar de la carte" draggable="false">
+            <canvas id="radar-heatmap" width="384" height="384" aria-hidden="true" hidden></canvas>
             <div id="radar-routes" aria-label="Départs et activations des lancers sélectionnés"></div>
             <div id="points" aria-label="Lancers sur le radar"></div>
           </div>
           <p id="radar-empty" hidden>Radar indisponible pour cette carte.</p>
+          <p id="heatmap-empty" hidden>Aucune activation à afficher.</p>
           <div class="radar-zoom" role="group" aria-label="Zoom du radar">
             <button type="button" data-zoom="out" aria-label="Réduire le zoom">−</button>
             <output aria-label="Zoom actuel">100 %</output>
             <button type="button" data-zoom="in" aria-label="Augmenter le zoom">+</button>
           </div>
+        </div>
+        <div id="heatmap-legend" class="heatmap-legend" role="group" aria-label="Densité des activations" hidden>
+          <span id="heatmap-scale" class="heatmap-scale" aria-hidden="true"></span>
+          <div class="heatmap-ticks"><span>Faible</span><span>Moyenne</span><span>Forte</span></div>
         </div>
       </section>
       <div class="details">
@@ -67,7 +74,7 @@
           <div id="clip-actions" class="clip-actions" hidden>
             <button id="portrait-action" type="button">Générer vidéo 9:16</button>
             <button id="delete-clip" class="delete-clip" type="button" hidden>Supprimer</button>
-            <button id="favorite-clip" class="favorite-button" type="button" aria-pressed="false" hidden>☆</button>
+            <button id="favorite-clip" class="favorite-button" type="button" aria-keyshortcuts="F" aria-pressed="false" hidden>☆</button>
             <div id="throw-controls" class="throw-controls" hidden>
               <span id="throw-controls-label" class="lineup-label">Commandes</span>
               <div id="throw-keys" class="throw-keys" role="group" aria-labelledby="throw-controls-label"></div>

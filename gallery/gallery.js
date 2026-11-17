@@ -15,6 +15,7 @@ const mouseModes = { left: "Clic gauche", middle: "Clic milieu · gauche + droit
 const RARE_BELOW = 2;
 const COMMON_MAX = 10;
 const frequencyLabels = { rare: "Rare", common: "Commun", frequent: "Très fréquent" };
+const HEATMAP_COLORS = [[40, 91, 241], [36, 190, 230], [251, 212, 65], [250, 122, 46], [225, 42, 49]];
 
 const byId = (id) => document.getElementById(id);
 const matchSelect = byId("match");
@@ -29,6 +30,8 @@ const detail = byId("video-empty");
 const radarImage = byId("radar-image");
 const markers = byId("points");
 const radarRoutes = byId("radar-routes");
+const heatmapCanvas = byId("radar-heatmap");
+const heatmapToggle = byId("heatmap-toggle");
 const radarView = createRadarViewport(byId("radar"), byId("radar-content"));
 const list = byId("clips");
 const deleteButton = byId("delete-clip");
@@ -44,6 +47,7 @@ const copyStatus = byId("copy-status");
 let currentMatch;
 let filter = "all";
 let statusFilter = "";
+let heatmapEnabled = false;
 const favoritePending = new Set();
 let filtered = [];
 let visible = [];
@@ -186,6 +190,7 @@ function syncAddress(replace = false) {
     if (frequencySelect?.value) params.set("frequency", frequencySelect.value);
     if (pointSelect.value !== "impact") params.set("points", pointSelect.value);
     if (levelSelect.value === "lower") params.set("floor", "lower");
+    if (heatmapEnabled) params.set("heatmap", "1");
     const group = clipId(radarSelection?.[0]);
     if (group) params.set("group", group);
     const clip = clipId(selected);
@@ -384,6 +389,42 @@ function revealSelectedRow() {
     if (item.bottom > viewport.bottom) list.scrollTop += item.bottom - viewport.bottom;
 }
 
+function adjacentRowIndex(direction) {
+    const index = visible.indexOf(selected);
+    if (index !== -1 || !selected) return index + direction;
+
+    // A clip marked as watched can stay in the player after leaving the filtered list.
+    const clips = currentMatch.clips;
+    const visibleClips = new Set(visible);
+    for (let i = clips.indexOf(selected) + direction; i >= 0 && i < clips.length; i += direction) {
+        if (visibleClips.has(clips[i])) return visible.indexOf(clips[i]);
+    }
+    return -1;
+}
+
+function handleLibraryShortcut(event) {
+    if (event.defaultPrevented || event.isComposing || event.repeat || event.ctrlKey || event.altKey || event.metaKey) return;
+    const key = event.key.toLowerCase();
+    if (key !== "f" && key !== "n" && key !== "b") return;
+    const target = event.target;
+    if (target?.isContentEditable || target?.closest?.("input, textarea, select") || document.querySelector("dialog[open]")) return;
+
+    if (key === "f") {
+        if (favoriteButton.hidden || favoriteButton.disabled) return;
+        event.preventDefault();
+        favoriteButton.click();
+        return;
+    }
+
+    const index = adjacentRowIndex(key === "n" ? 1 : -1);
+    const row = list.querySelector(`.clip-row[data-index="${index}"]`);
+    if (!row) return;
+    event.preventDefault();
+    if (list.contains(document.activeElement)) row.focus({ preventScroll: true });
+    row.click();
+    revealSelectedRow();
+}
+
 function radarPosition([x, y, z], radar) {
     const left = (x - radar.originX) / radar.units * 100;
     const top = (radar.originY - y) / radar.units * 100;
@@ -437,11 +478,70 @@ function renderRadarLinks() {
     }
 }
 
+function renderHeatmap(radar, lower) {
+    const { width, height } = heatmapCanvas;
+    const context = heatmapCanvas.getContext("2d");
+    if (!context) return;
+    const positions = filtered.flatMap((clip) => {
+        const position = radarPosition(clip.impact, radar);
+        return position?.lower === lower ? [{ ...position, weight: throwFrequency(clip)?.total ?? 1 }] : [];
+    });
+    byId("heatmap-empty").hidden = positions.length > 0;
+    context.clearRect(0, 0, width, height);
+    if (!positions.length) return;
+
+    const density = new Float32Array(width * height);
+    const radius = Math.round(width * .055);
+    const radiusSquared = radius ** 2;
+    const gaussianScale = 2 * (radius / 2.5) ** 2;
+    const edgeWeight = Math.exp(-radiusSquared / gaussianScale);
+    const radialWeights = Array.from({ length: radiusSquared }, (_, distance) => Math.exp(-distance / gaussianScale) - edgeWeight);
+    let peak = 0;
+    for (const { left, top, weight } of positions) {
+        const centerX = Math.round(left / 100 * (width - 1));
+        const centerY = Math.round(top / 100 * (height - 1));
+        for (let y = Math.max(0, centerY - radius); y <= Math.min(height - 1, centerY + radius); y++) {
+            const dySquared = (y - centerY) ** 2;
+            for (let x = Math.max(0, centerX - radius); x <= Math.min(width - 1, centerX + radius); x++) {
+                const distanceSquared = (x - centerX) ** 2 + dySquared;
+                if (distanceSquared >= radiusSquared) continue;
+                const index = y * width + x;
+                density[index] += weight * radialWeights[distanceSquared];
+                peak = Math.max(peak, density[index]);
+            }
+        }
+    }
+
+    const image = context.createImageData(width, height);
+    const lastColor = HEATMAP_COLORS.length - 1;
+    for (let index = 0; index < density.length; index++) {
+        if (!density[index]) continue;
+        const strength = density[index] / peak;
+        const color = strength * lastColor;
+        const step = Math.floor(color);
+        const start = HEATMAP_COLORS[step];
+        const end = HEATMAP_COLORS[Math.min(step + 1, lastColor)];
+        const pixel = index * 4;
+        for (let channel = 0; channel < 3; channel++) {
+            image.data[pixel + channel] = start[channel] + (end[channel] - start[channel]) * (color - step);
+        }
+        image.data[pixel + 3] = 220 * Math.sqrt(strength);
+    }
+    context.putImageData(image, 0, 0);
+}
+
 function renderRadar() {
     const { radar } = currentMatch;
     radarView?.setAvailable(Boolean(radar));
     const point = pointSelect.value;
     const lower = levelSelect.value === "lower";
+    const showHeatmap = Boolean(radar) && heatmapEnabled;
+    heatmapToggle.hidden = !radar;
+    heatmapToggle.setAttribute("aria-pressed", String(heatmapEnabled));
+    heatmapCanvas.hidden = !showHeatmap;
+    byId("heatmap-legend").hidden = !showHeatmap;
+    byId("heatmap-empty").hidden = true;
+    pointSelect.closest("label").hidden = showHeatmap;
     markers.replaceChildren();
     byId("radar-empty").hidden = Boolean(radar);
     byId("level-control").hidden = !radar?.lower;
@@ -453,6 +553,12 @@ function renderRadar() {
     }
     radarImage.src = lower ? radar.lower : radar.upper;
     radarImage.alt = `Radar de ${mapLabel(currentMatch.map)}`;
+    if (showHeatmap) {
+        radarSelection = undefined;
+        radarRoutes.replaceChildren();
+        renderHeatmap(radar, lower);
+        return;
+    }
     const groups = [];
     for (const clip of filtered) {
         const position = radarPosition(clip[point], radar);
@@ -655,7 +761,8 @@ function renderClipList(preferred = selected, autoplay = false, playingClip) {
         row.addEventListener("click", () => {
             const { radar } = currentMatch;
             if (radar?.lower) {
-                const level = clip[pointSelect.value][2] < radar.thresholdZ ? "lower" : "upper";
+                const endpoint = heatmapEnabled ? "impact" : pointSelect.value;
+                const level = clip[endpoint][2] < radar.thresholdZ ? "lower" : "upper";
                 if (level !== levelSelect.value) {
                     levelSelect.value = level;
                     renderRadar();
@@ -779,6 +886,7 @@ function restoreLibraryAddress() {
     const frequency = params.get("frequency");
     if (frequencySelect) frequencySelect.value = Object.hasOwn(frequencyLabels, frequency) ? frequency : "";
     showStatusFilter();
+    heatmapEnabled = params.get("heatmap") === "1";
     pointSelect.value = params.get("points") === "launch" ? "launch" : "impact";
     const round = params.get("round");
     switchMatch({
@@ -808,7 +916,16 @@ function rememberVideoAudio() {
 
 rememberVideoAudio();
 
+byId("heatmap-scale").style.backgroundImage = `linear-gradient(to right, ${HEATMAP_COLORS.map((color) => `rgb(${color.join(",")})`).join(", ")})`;
+heatmapToggle.addEventListener("click", () => {
+    heatmapEnabled = !heatmapEnabled;
+    renderClips();
+    syncAddress();
+});
+
 if (library) {
+    window.handleLibraryShortcut = handleLibraryShortcut;
+    document.addEventListener("keydown", handleLibraryShortcut);
     document.body.classList.add("library-view");
     document.querySelector("h1").textContent = "Vidéothèque";
     byId("match-label").textContent = "Carte";
