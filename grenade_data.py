@@ -12,14 +12,13 @@ KINDS = {
     "HE Grenade": "he",
     "Molotov": "molo",
     "Incendiary Grenade": "molo",
-    "Decoy Grenade": "decoy",
 }
+UTILITY_KINDS = frozenset(KINDS.values())
 
 ACTIVATIONS = {
     "smoke": "smokes_start",
     "flash": "flashbangs_explode",
     "he": "he_grenades_explode",
-    "decoy": "decoys_start",
 }
 
 

@@ -7,7 +7,7 @@ from pathlib import Path
 from utility_video import run
 
 
-GRENADE_NAMES = {"smoke": "Smoke", "flash": "Flash", "he": "HE", "molo": "Molo", "decoy": "Leurre"}
+GRENADE_NAMES = {"smoke": "Smoke", "flash": "Flash", "he": "HE", "molo": "Molotov"}
 # Crop around the center using the largest even dimensions with an exact 9:16 ratio.
 PORTRAIT_FILTER = r"crop=18*trunc(min(iw/18\,ih/32)):32*trunc(min(iw/18\,ih/32)),scale=720:1280:flags=lanczos,setsar=1"
 

@@ -5,6 +5,7 @@ from pathlib import Path
 from urllib.parse import quote
 from uuid import uuid4
 
+from grenade_data import UTILITY_KINDS
 from throw_groups import RADAR_GROUP_RADIUS
 
 
@@ -40,12 +41,25 @@ def completed_catalogues(output):
             continue
 
 
+def published_clips(match):
+    return (clip for clip in match["clips"] if clip.get("kind") in UTILITY_KINDS
+            and CLIP_VIDEO.fullmatch(clip.get("video", "")))
+
+
+def playable_matches(folder, catalogue):
+    for match in catalogue["matches"]:
+        clips = [clip for clip in published_clips(match) if (folder / clip["video"]).is_file()]
+        if clips:
+            yield {**match, "clips": clips}
+
+
 def existing_galleries(output):
     galleries = []
     for folder, date, data in completed_catalogues(output):
-        count = sum(1 for match in data["matches"] for clip in match["clips"] if clip.get("video"))
-        if count:
-            galleries.append({"title": data["title"], "maps": [match["map"] for match in data["matches"] if match["clips"]],
+        matches = list(playable_matches(folder, data))
+        if matches:
+            count = sum(len(match["clips"]) for match in matches)
+            galleries.append({"title": data["title"], "maps": [match["map"] for match in matches],
                               "count": count, "url": export_url(folder) + "/index.html", "date": date})
     return sorted(galleries, key=lambda item: item["date"], reverse=True)
 
@@ -106,9 +120,8 @@ def throw_references(output, map_name):
                 continue
             radar = radar or match.get("radar")
             # Use one catalogue snapshot so a concurrent deletion cannot hide a throw.
-            clips.extend({**clip, "exportId": folder.name} for clip in match["clips"]
-                         if CLIP_VIDEO.fullmatch(clip.get("video", "")))
-            removed.extend(match.get("removedThrows", ()))
+            clips.extend({**clip, "exportId": folder.name} for clip in published_clips(match))
+            removed.extend(clip for clip in match.get("removedThrows", ()) if clip.get("kind") in UTILITY_KINDS)
     return radar, clips, removed
 
 
@@ -117,12 +130,10 @@ def library_catalogue(output):
     for folder, _, data in sorted(completed_catalogues(output), key=lambda item: item[1], reverse=True):
         base = export_url(folder)
         states = read_clip_states(folder)
-        for match in data["matches"]:
+        for match in playable_matches(folder, data):
             clips = []
             for clip in match["clips"]:
-                video = clip.get("video", "")
-                if not CLIP_VIDEO.fullmatch(video) or not (folder / video).is_file():
-                    continue
+                video = clip["video"]
                 filename = Path(video).name
                 state = states.get(filename, {})
                 counts = read_throw_usage(throw_usage_path(folder, filename))
@@ -130,8 +141,6 @@ def library_catalogue(output):
                 clips.append({**clip, **usage, "video": f"{base}/{video}", "file": filename,
                               "exportId": folder.name, "source": match["demo"],
                               **{flag: state.get(flag) is True for flag in CLIP_FLAGS}})
-            if not clips:
-                continue
             entry = maps.setdefault(match["map"], {"map": match["map"], "radar": None, "clips": []})
             radar = match.get("radar")
             if radar and not entry["radar"]:
@@ -159,8 +168,8 @@ def find_library_clip(output, export_id, filename):
     manifest, clip_file = clip_paths(output, export_id, filename)
     catalogue = read_catalogue(manifest)
     for match in catalogue["matches"]:
-        for clip in match["clips"]:
-            if clip.get("video") == f"clips/{filename}" and clip_file.is_file():
+        for clip in published_clips(match):
+            if clip["video"] == f"clips/{filename}" and clip_file.is_file():
                 return clip_file, match["map"], clip
     raise ValueError("Ce clip n’est pas référencé dans la vidéothèque.")
 

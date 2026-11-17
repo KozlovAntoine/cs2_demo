@@ -8,9 +8,8 @@ const clipStateEnabled = library && window.utilityClipState === true;
 const kinds = {
     smoke: { label: "Smoke", color: "#8dd3f3" },
     flash: { label: "Flash", color: "#f7df88" },
-    molo: { label: "Molo / incendiaire", color: "#fa9c77" },
+    molo: { label: "Molotov", color: "#fa9c77" },
     he: { label: "HE", color: "#ed91af" },
-    decoy: { label: "Leurre", color: "#a6d89a" },
 };
 const mouseModes = { left: "Clic gauche", middle: "Clic milieu · gauche + droite", right: "Clic droit" };
 const RARE_BELOW = 2;

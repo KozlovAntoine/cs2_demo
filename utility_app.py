@@ -18,10 +18,10 @@ from uuid import uuid4
 
 from callout_zones import change_zone, read_zones
 from demo_imports import read_demo_imports
-from grenade_data import KINDS
+from grenade_data import UTILITY_KINDS
 from clip_library import (
     CATALOGUE_PREFIX, clip_paths, delete_clip, existing_galleries, export_url, find_library_clip, library_catalogue,
-    set_clip_state,
+    playable_matches, read_catalogue, set_clip_state,
 )
 from portrait_video import existing_portrait, generate_portrait, portrait_folder
 from utility_video import (
@@ -141,7 +141,7 @@ class App:
             kind = data.get("kind")
             member = data.get("demo")
             limit = data.get("limit")
-            if kind not in ("all", *KINDS.values()):
+            if not isinstance(kind, str) or (kind != "all" and kind not in UTILITY_KINDS):
                 raise ValueError("Type d’utilitaire invalide.")
             if member is not None:
                 sources = self.selection["sources"]
@@ -361,6 +361,15 @@ class Handler(BaseHTTPRequestHandler):
                     file = radar and radar["lower" if filename.endswith("_lower.png") else "upper"]
             if file is None or not file.is_file():
                 self.send_error(HTTPStatus.NOT_FOUND)
+            elif file.name == "catalogue.js":
+                try:
+                    data = read_catalogue(file)
+                    data["matches"] = list(playable_matches(file.parent, data))
+                except (OSError, ValueError, KeyError, TypeError):
+                    self.send_error(HTTPStatus.NOT_FOUND)
+                else:
+                    script = f"{CATALOGUE_PREFIX}{json.dumps(data, ensure_ascii=True)};\n"
+                    self.send_bytes(script.encode("ascii"), "text/javascript")
             else:
                 self.send_file(file)
 
@@ -429,6 +438,8 @@ class Handler(BaseHTTPRequestHandler):
             return None
         resolved = file.resolve()
         if resolved.is_relative_to(directory) and directory.resolve().parent == output:
+            if len(parts) == 4 and parts[3] in GALLERY_ASSETS and (directory / "index.html").is_file():
+                return ROOT / "gallery" / parts[3]
             return resolved
         return None
 
