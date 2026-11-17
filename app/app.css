@@ -69,6 +69,8 @@ details .field { margin: 10px 0; }
 .gallery-row small { grid-column: 1; color: var(--muted); }
 .gallery-row > span { grid-column: 2; grid-row: 1 / 3; align-self: center; color: var(--gold); }
 #gallery-view, iframe { width: 100%; border: 0; display: block; height: calc(100vh - 64px); height: calc(100dvh - 64px); }
+.library-fullscreen .app-bar { display: none; }
+.library-fullscreen #gallery-view, .library-fullscreen iframe { height: 100vh; height: 100dvh; }
 .closed { margin: 30px; color: var(--muted); }
 @media (max-width: 720px) {
   #home { grid-template-columns: 1fr; }

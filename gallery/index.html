@@ -18,6 +18,7 @@
       </div>
       <div class="map-controls">
         <label for="match"><span id="match-label">Démo</span> <select id="match"></select></label>
+        <button id="fullscreen-view" class="zone-button" type="button" aria-pressed="false" hidden>Fullscreen</button>
         <button id="edit-callouts" class="zone-button" type="button" hidden>Éditer les zones</button>
       </div>
     </header>
@@ -33,7 +34,7 @@
       </div>
     </div>
     <div class="workspace">
-      <section class="panel" aria-labelledby="radar-title">
+      <section id="radar-panel" class="panel" aria-labelledby="radar-title">
         <div class="section-bar">
           <h2 id="radar-title">Radar</h2>
           <label for="point" class="control">Points <select id="point">
@@ -65,7 +66,7 @@
         </div>
       </section>
       <div class="details">
-        <section class="panel" aria-labelledby="clip-title">
+        <section id="video-panel" class="panel" aria-labelledby="clip-title">
           <div class="section-bar"><h2 id="clip-title">Clip</h2><span id="clip-meta"></span></div>
           <div class="player">
             <video id="video" controls playsinline preload="metadata" hidden></video>
@@ -93,12 +94,13 @@
           </div>
           <p id="copy-status" role="status"></p>
         </section>
-        <section class="panel" aria-labelledby="list-title">
+        <section id="clips-panel" class="panel" aria-labelledby="list-title">
           <div class="section-bar"><h2 id="list-title">Lancers</h2><span id="count" aria-live="polite"></span></div>
           <p id="clip-state-error" class="delete-status" role="alert" hidden></p>
           <div id="clips" class="clip-list" aria-label="Clips filtrés"></div>
         </section>
       </div>
+      <aside id="fullscreen-sidebar" class="fullscreen-sidebar" aria-label="Carte, filtres et lancers" hidden></aside>
     </div>
     </div>
   </main>

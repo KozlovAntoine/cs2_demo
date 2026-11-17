@@ -135,6 +135,9 @@ function setAddress(search, replace = false) {
 
 window.utilityNavigation = {
     search: () => location.search,
+    fullscreen(enabled) {
+        document.body.classList.toggle("library-fullscreen", enabled && route() === "/library/index.html" && !closed);
+    },
     update(search, replace) {
         if (route() !== "/library/index.html" || closed) return;
         lastLibrarySearch = search;
@@ -151,6 +154,7 @@ function renderRoute(focus = false, refresh = false) {
         return;
     }
     const library = path.startsWith("/library/");
+    if (!library || galleryPath !== path) document.body.classList.remove("library-fullscreen");
     if (library) lastLibrarySearch = location.search.slice(1);
     if (galleryPath !== path || refresh) {
         galleryPath = path;
@@ -184,6 +188,7 @@ function openGallery(url) {
 }
 
 function showHome(focus = true) {
+    document.body.classList.remove("library-fullscreen");
     byId("gallery-view").hidden = true;
     home.hidden = false;
     byId("library-link").setAttribute("aria-pressed", "false");

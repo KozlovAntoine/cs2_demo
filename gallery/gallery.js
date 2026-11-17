@@ -32,6 +32,8 @@ const markers = byId("points");
 const radarRoutes = byId("radar-routes");
 const heatmapCanvas = byId("radar-heatmap");
 const heatmapToggle = byId("heatmap-toggle");
+const fullscreenButton = byId("fullscreen-view");
+const fullscreenSidebar = byId("fullscreen-sidebar");
 const radarView = createRadarViewport(byId("radar"), byId("radar-content"));
 const list = byId("clips");
 const deleteButton = byId("delete-clip");
@@ -48,6 +50,8 @@ let currentMatch;
 let filter = "all";
 let statusFilter = "";
 let heatmapEnabled = false;
+let fullscreenEnabled = false;
+let fullscreenSlots = [];
 const favoritePending = new Set();
 let filtered = [];
 let visible = [];
@@ -176,6 +180,29 @@ function createRadarViewport(viewport, content) {
     };
 }
 
+function setLibraryFullscreen(enabled) {
+    navigation?.fullscreen(enabled);
+    if (enabled === fullscreenEnabled) return;
+    fullscreenEnabled = enabled;
+    if (enabled) {
+        const selectors = [".map-controls", ".toolbar", "#radar-panel", "#throw-console", "#clips-panel"];
+        fullscreenSlots = selectors.map((selector) => {
+            const element = document.querySelector(selector);
+            const placeholder = document.createComment("fullscreen position");
+            element.before(placeholder);
+            fullscreenSidebar.append(element);
+            return { element, placeholder };
+        });
+    } else {
+        for (const { element, placeholder } of fullscreenSlots) placeholder.replaceWith(element);
+        fullscreenSlots = [];
+    }
+    fullscreenSidebar.hidden = !enabled;
+    document.body.classList.toggle("fullscreen-view", enabled);
+    fullscreenButton.setAttribute("aria-pressed", String(enabled));
+    fullscreenButton.textContent = enabled ? "Quitter fullscreen" : "Fullscreen";
+}
+
 function clipId(clip) {
     return clip?.exportId ? `${clip.exportId}/${clip.file}` : undefined;
 }
@@ -191,6 +218,7 @@ function syncAddress(replace = false) {
     if (pointSelect.value !== "impact") params.set("points", pointSelect.value);
     if (levelSelect.value === "lower") params.set("floor", "lower");
     if (heatmapEnabled) params.set("heatmap", "1");
+    if (fullscreenEnabled) params.set("fullscreen", "1");
     const group = clipId(radarSelection?.[0]);
     if (group) params.set("group", group);
     const clip = clipId(selected);
@@ -828,6 +856,7 @@ function switchMatch({ round = "", level = "upper", groupId, selectedId, fromAdd
     byId("library-content").hidden = !currentMatch;
     byId("library-empty").hidden = Boolean(currentMatch);
     if (!currentMatch) {
+        setLibraryFullscreen(false);
         filtered = [];
         visible = [];
         selectClip(undefined);
@@ -887,6 +916,7 @@ function restoreLibraryAddress() {
     if (frequencySelect) frequencySelect.value = Object.hasOwn(frequencyLabels, frequency) ? frequency : "";
     showStatusFilter();
     heatmapEnabled = params.get("heatmap") === "1";
+    setLibraryFullscreen(params.get("fullscreen") === "1");
     pointSelect.value = params.get("points") === "launch" ? "launch" : "impact";
     const round = params.get("round");
     switchMatch({
@@ -922,8 +952,14 @@ heatmapToggle.addEventListener("click", () => {
     renderClips();
     syncAddress();
 });
+fullscreenButton.addEventListener("click", () => {
+    setLibraryFullscreen(!fullscreenEnabled);
+    syncAddress();
+    fullscreenButton.focus();
+});
 
 if (library) {
+    fullscreenButton.hidden = false;
     window.handleLibraryShortcut = handleLibraryShortcut;
     document.addEventListener("keydown", handleLibraryShortcut);
     document.body.classList.add("library-view");

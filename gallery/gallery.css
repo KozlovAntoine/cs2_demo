@@ -163,6 +163,21 @@ dialog p { color: var(--muted); margin-top: 7px; overflow-wrap: anywhere; }
 #callout-overlay.dragging, #callout-overlay.dragging .callout-vertex.handle { cursor: grabbing; }
 .callout-impact { pointer-events: none; fill: #e0e9f1; opacity: .35; }
 .callout-impact.active { fill: #fff0c7; stroke: #111418; stroke-width: 1px; vector-effect: non-scaling-stroke; opacity: 1; }
+.fullscreen-view { overflow: hidden; }
+.fullscreen-view main { max-width: none; padding: 12px; }
+.fullscreen-view main > header { display: none; }
+.fullscreen-view .workspace { grid-template-columns: minmax(0, 3fr) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); gap: 12px; height: calc(100vh - 24px); height: calc(100dvh - 24px); }
+.fullscreen-view .details { display: contents; }
+.fullscreen-view #video-panel { grid-column: 1; grid-row: 1; align-self: stretch; display: flex; flex-direction: column; min-height: 0; }
+.fullscreen-view .player { flex: 1; min-height: 0; aspect-ratio: auto; }
+.fullscreen-view video { object-fit: contain; }
+.fullscreen-sidebar { grid-column: 2; grid-row: 1; align-self: stretch; display: flex; flex-direction: column; gap: 12px; min-width: 0; min-height: 0; overflow-y: auto; scrollbar-color: #525c67 #20262b; }
+.fullscreen-sidebar > * { flex-shrink: 0; }
+.fullscreen-sidebar .toolbar { margin: 0; padding: 0; border: 0; gap: 8px; }
+.fullscreen-sidebar .map-controls, .fullscreen-sidebar .toolbar-filters { gap: 6px; }
+.fullscreen-sidebar label { flex-wrap: wrap; min-width: 0; }
+.fullscreen-sidebar select { max-width: 100%; }
+.fullscreen-sidebar .clip-row { grid-template-columns: 8px minmax(0, 1.3fr) minmax(0, 1fr) 3ch 6ch; gap: 5px; padding: 9px 8px; font-size: .85rem; }
 @media (max-width: 780px) {
   main { padding-top: 24px; }
   .workspace { grid-template-columns: minmax(0, 1fr); }
