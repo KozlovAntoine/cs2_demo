@@ -17,6 +17,9 @@ let picking = false;
 let closed = false;
 let galleryPath;
 let lastLibrarySearch = "";
+const ESTIMATED_SECONDS_PER_CLIP = 10;
+let estimatedJobId;
+let clipFinishEstimates = {};
 
 async function request(path, payload) {
     const options = payload === undefined ? undefined : {
@@ -93,6 +96,38 @@ function selectSource(selection) {
 
 demo.addEventListener("change", updateSelectionBadge);
 
+function estimatedJobMessages(job) {
+    const storageKey = "utilityClipFinishEstimates";
+    if (estimatedJobId !== job.id) {
+        estimatedJobId = job.id;
+        clipFinishEstimates = {};
+        try {
+            const saved = JSON.parse(localStorage.getItem(storageKey));
+            if (saved?.jobId === job.id && saved.finishes && typeof saved.finishes === "object") {
+                clipFinishEstimates = saved.finishes;
+            }
+        } catch { }
+    }
+    const messages = job.messages ?? [];
+    const countPattern = /\b(?:de|cs|ar)_\w+ : (\d+) clips? \(/;
+    const analysis = messages.findLast((message) => countPattern.test(message));
+    if (analysis && job.state === "running" && !Number.isFinite(clipFinishEstimates[analysis])) {
+        const count = Number(analysis.match(countPattern)[1]);
+        clipFinishEstimates[analysis] = Date.now() + count * ESTIMATED_SECONDS_PER_CLIP * 1000;
+        try {
+            localStorage.setItem(storageKey, JSON.stringify({ jobId: job.id, finishes: clipFinishEstimates }));
+        } catch { }
+    }
+    let captureFinish;
+    return messages.map((message) => {
+        if (countPattern.test(message)) captureFinish = clipFinishEstimates[message];
+        const finish = clipFinishEstimates[message] ?? (message.includes("CS2 enregistre ") ? captureFinish : undefined);
+        if (!Number.isFinite(finish)) return message;
+        const time = new Date(finish).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+        return `${message} Fin estimée : ${time}`;
+    });
+}
+
 function displayJob(job) {
     const running = job.state === "running";
     working = running;
@@ -102,7 +137,7 @@ function displayJob(job) {
     byId("spinner").hidden = !running;
     const phase = job.state === "error" ? "Export interrompu" : job.phase ?? "";
     if (byId("phase").textContent !== phase) byId("phase").textContent = phase;
-    const messages = job.messages ?? [];
+    const messages = estimatedJobMessages(job);
     byId("latest").textContent = job.error ?? messages.at(-1) ?? "";
     byId("latest").classList.toggle("error", job.state === "error");
     if (byId("messages").dataset.snapshot !== messages.join("\n")) {

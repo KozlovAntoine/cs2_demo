@@ -6,7 +6,7 @@ from urllib.parse import quote
 from uuid import uuid4
 
 from grenade_data import UTILITY_KINDS
-from throw_groups import RADAR_GROUP_RADIUS
+from throw_groups import RADAR_GROUP_RADIUS, THROW_GROUP_SIZE_UNITS
 
 
 CATALOGUE_PREFIX = "window.utilityCatalogue = "
@@ -140,6 +140,7 @@ def library_catalogue(output):
                 usage = {"usage": {"total": sum(counts.values()), "demos": len(counts)}} if counts else {}
                 clips.append({**clip, **usage, "video": f"{base}/{video}", "file": filename,
                               "exportId": folder.name, "source": match["demo"],
+                              "calloutOverride": state.get("calloutOverride"),
                               **{flag: state.get(flag) is True for flag in CLIP_FLAGS}})
             entry = maps.setdefault(match["map"], {"map": match["map"], "radar": None, "clips": []})
             radar = match.get("radar")
@@ -147,7 +148,7 @@ def library_catalogue(output):
                 entry["radar"] = {**radar, "upper": f"{base}/{radar['upper']}",
                                   "lower": f"{base}/{radar['lower']}" if radar.get("lower") else None}
             entry["clips"].extend(clips)
-    return {"title": "Vidéothèque", "groupRadius": RADAR_GROUP_RADIUS,
+    return {"title": "Vidéothèque", "groupRadius": RADAR_GROUP_RADIUS, "groupBoxUnits": THROW_GROUP_SIZE_UNITS,
             "matches": [maps[map_name] for map_name in sorted(maps)]}
 
 
@@ -176,7 +177,14 @@ def find_library_clip(output, export_id, filename):
 
 def set_clip_state(output, export_id, filename, data):
     updates = {flag: data[flag] for flag in CLIP_FLAGS if flag in data}
-    if not updates or any(type(value) is not bool for value in updates.values()):
+    if any(type(value) is not bool for value in updates.values()):
+        raise ValueError("État de clip invalide.")
+    if "calloutOverride" in data:
+        name = data["calloutOverride"]
+        if name is not None and (not isinstance(name, str) or not 1 <= len(name.strip()) <= 64):
+            raise ValueError("Saisis un nom de zone de 1 à 64 caractères.")
+        updates["calloutOverride"] = name.strip() if name is not None else None
+    if not updates:
         raise ValueError("État de clip invalide.")
     clip_file, _, _ = find_library_clip(output, export_id, filename)
     folder = clip_file.parent.parent

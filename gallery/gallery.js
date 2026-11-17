@@ -1,7 +1,7 @@
 "use strict";
 
 const catalogue = window.utilityCatalogue;
-const groupRadius = catalogue.groupRadius ?? 4;
+const RADAR_CLUSTER_RADIUS_PX = 48;
 const library = window.utilityLibrary === true;
 const portrait = library && window.utilityPortrait === true;
 const clipStateEnabled = library && window.utilityClipState === true;
@@ -34,10 +34,14 @@ const heatmapCanvas = byId("radar-heatmap");
 const heatmapToggle = byId("heatmap-toggle");
 const fullscreenButton = byId("fullscreen-view");
 const fullscreenSidebar = byId("fullscreen-sidebar");
-const radarView = createRadarViewport(byId("radar"), byId("radar-content"));
+const radarView = createRadarViewport(byId("radar"), byId("radar-content"), refreshRadarGrouping);
 const list = byId("clips");
 const deleteButton = byId("delete-clip");
 const favoriteButton = byId("favorite-clip");
+const editClipCallout = byId("edit-clip-callout");
+const clipCalloutDialog = byId("clip-callout-dialog");
+const clipCalloutForm = byId("clip-callout-form");
+const clipCalloutInput = byId("clip-callout-name");
 const deleteDialog = byId("confirm-delete");
 const deleteToast = byId("delete-toast");
 const clipActions = byId("clip-actions");
@@ -56,8 +60,12 @@ const favoritePending = new Set();
 let filtered = [];
 let visible = [];
 let radarSelection;
+let radarGroupingCache;
 let selected;
 let selectionHistory = [];
+let playbackHistory = [];
+let playbackIndex = -1;
+let playbackScope;
 let clipToDelete;
 let deleteToastTimer;
 let portraitTimer;
@@ -67,7 +75,7 @@ let portraitError = "";
 
 const navigation = library && window.parent !== window ? window.parent.utilityNavigation : undefined;
 
-function createRadarViewport(viewport, content) {
+function createRadarViewport(viewport, content, onZoom) {
     if (!content) return;
     const minZoom = 100;
     const maxZoom = 500;
@@ -106,6 +114,7 @@ function createRadarViewport(viewport, content) {
         y = focusY - (focusY - y) * ratio;
         zoom = next;
         render();
+        onZoom?.();
     }
 
     zoomOut.addEventListener("click", () => zoomBy(-1));
@@ -164,6 +173,7 @@ function createRadarViewport(viewport, content) {
 
     render();
     return {
+        get zoom() { return zoom; },
         reset() {
             if (pan && viewport.hasPointerCapture(pan.id)) viewport.releasePointerCapture(pan.id);
             pan = undefined;
@@ -365,6 +375,17 @@ function renderClipTitle(clip) {
 
 function selectClip(clip, autoplay = false) {
     const changed = selected !== clip;
+    const scope = JSON.stringify([currentMatch?.map, filter, statusFilter, roundSelect.value, frequencySelect?.value]);
+    if (scope !== playbackScope) {
+        playbackScope = scope;
+        playbackHistory = [];
+        playbackIndex = -1;
+    }
+    if (clip && playbackHistory[playbackIndex] !== clip) {
+        playbackHistory.splice(playbackIndex + 1);
+        playbackHistory.push(clip);
+        playbackIndex = playbackHistory.length - 1;
+    }
     if (selected !== clip || !video.getAttribute("src")) {
         video.pause();
         video.removeAttribute("src");
@@ -385,6 +406,7 @@ function selectClip(clip, autoplay = false) {
     selected = clip;
     deleteButton.hidden = !library || !clip?.exportId;
     clipActions.hidden = !clip?.video;
+    editClipCallout.hidden = !window.utilityClipCallout || !clip?.exportId;
     syncFavoriteButton();
     if (changed) showLineup(clip);
     if (portrait && changed) {
@@ -400,7 +422,7 @@ function selectClip(clip, autoplay = false) {
         row.setAttribute("aria-pressed", String(visible[Number(row.dataset.index)] === selected));
     }
     for (const marker of markers.querySelectorAll("button")) {
-        marker.setAttribute("aria-pressed", String(marker.clips === radarSelection));
+        marker.setAttribute("aria-pressed", String(marker.clips.some((item) => radarSelection?.includes(item))));
     }
     for (const marker of radarRoutes.querySelectorAll("button")) {
         marker.setAttribute("aria-pressed", String(marker.clip === selected));
@@ -430,6 +452,19 @@ function adjacentRowIndex(direction) {
     return -1;
 }
 
+function playClip(clip) {
+    const { radar } = currentMatch;
+    if (radar?.lower) {
+        const endpoint = heatmapEnabled ? "impact" : pointSelect.value;
+        const level = clip[endpoint][2] < radar.thresholdZ ? "lower" : "upper";
+        if (level !== levelSelect.value) {
+            levelSelect.value = level;
+            renderRadar();
+        }
+    }
+    selectClip(clip, true);
+}
+
 function handleLibraryShortcut(event) {
     if (event.defaultPrevented || event.isComposing || event.repeat || event.ctrlKey || event.altKey || event.metaKey) return;
     const key = event.key.toLowerCase();
@@ -444,12 +479,20 @@ function handleLibraryShortcut(event) {
         return;
     }
 
-    const index = adjacentRowIndex(key === "n" ? 1 : -1);
-    const row = list.querySelector(`.clip-row[data-index="${index}"]`);
-    if (!row) return;
+    const direction = key === "n" ? 1 : -1;
+    const historyIndex = playbackIndex + direction;
+    const previousClip = playbackHistory[historyIndex];
+    const clip = previousClip ?? visible[adjacentRowIndex(direction)];
+    if (!clip) return;
+    if (previousClip) playbackIndex = historyIndex;
     event.preventDefault();
-    if (list.contains(document.activeElement)) row.focus({ preventScroll: true });
-    row.click();
+    const row = list.querySelector(`.clip-row[data-index="${visible.indexOf(clip)}"]`);
+    if (row) {
+        if (list.contains(document.activeElement)) row.focus({ preventScroll: true });
+        row.click();
+    } else {
+        playClip(clip);
+    }
     revealSelectedRow();
 }
 
@@ -467,10 +510,12 @@ function positionOnRadar(element, { left, top }) {
 
 function renderRadarLinks() {
     radarRoutes.replaceChildren();
-    const anchor = [...markers.children].find((marker) => marker.clips === radarSelection);
-    for (const marker of markers.children) marker.hidden = Boolean(anchor && marker !== anchor);
-    if (!anchor) return;
+    const anchors = [...markers.children].filter((marker) => marker.clips.some((clip) => radarSelection?.includes(clip)));
+    for (const marker of markers.children) marker.hidden = Boolean(anchors.length && !anchors.includes(marker));
+    for (const anchor of anchors) renderRadarAnchorLinks(anchor);
+}
 
+function renderRadarAnchorLinks(anchor) {
     const { radar } = currentMatch;
     const endpoint = pointSelect.value === "impact" ? "launch" : "impact";
     const label = endpoint === "launch" ? "Départ" : "Activation";
@@ -558,6 +603,57 @@ function renderHeatmap(radar, lower) {
     context.putImageData(image, 0, 0);
 }
 
+function clusterRadarGroups(points, radius) {
+    const visited = new Set();
+    const groups = [];
+    for (const seed of points) {
+        if (visited.has(seed)) continue;
+        const clips = [];
+        let left = 0;
+        let top = 0;
+        for (const point of points) {
+            if (visited.has(point) || Math.hypot(seed.left - point.left, seed.top - point.top) > radius) continue;
+            visited.add(point);
+            left += point.left * point.clips.length;
+            top += point.top * point.clips.length;
+            clips.push(...point.clips);
+        }
+        groups.push({ left: left / clips.length, top: top / clips.length, clips });
+    }
+    return groups;
+}
+
+function radarGroupsForZoom(radar, point, lower) {
+    const width = Math.max(1, byId("radar").clientWidth);
+    const cache = radarGroupingCache;
+    if (!cache || cache.filtered !== filtered || cache.radar !== radar || cache.point !== point || cache.lower !== lower || cache.width !== width) {
+        const order = new Map(filtered.map((clip, index) => [clip, index]));
+        let groups = filtered.flatMap((clip) => {
+            const position = radarPosition(clip[point], radar);
+            return position?.lower === lower ? [{ ...position, clips: [clip] }] : [];
+        });
+        const levels = new Map();
+        // Build nested groups so zooming in only divides an existing focus.
+        for (let zoom = 500; zoom >= 100; zoom -= 10) {
+            const radius = RADAR_CLUSTER_RADIUS_PX / (width * zoom / 100) * 100;
+            groups = clusterRadarGroups(groups, radius);
+            for (const group of groups) group.clips.sort((a, b) => order.get(a) - order.get(b));
+            levels.set(zoom, groups);
+        }
+        radarGroupingCache = { filtered, radar, point, lower, width, levels };
+    }
+    return radarGroupingCache.levels.get(radarView.zoom);
+}
+
+function refreshRadarGrouping() {
+    if (!currentMatch) return;
+    const scroll = list.scrollTop;
+    renderRadar();
+    renderClipList(selected, false, selected);
+    list.scrollTop = scroll;
+    syncAddress(true);
+}
+
 function renderRadar() {
     const { radar } = currentMatch;
     radarView?.setAvailable(Boolean(radar));
@@ -587,17 +683,10 @@ function renderRadar() {
         renderHeatmap(radar, lower);
         return;
     }
-    const groups = [];
-    for (const clip of filtered) {
-        const position = radarPosition(clip[point], radar);
-        if (!position || position.lower !== lower) continue;
-        const { left, top } = position;
-        const group = groups.find((item) => Math.hypot(item.left - left, item.top - top) <= groupRadius);
-        if (group) group.clips.push(clip);
-        else groups.push({ left, top, clips: [clip] });
-    }
+    const groups = radarGroupsForZoom(radar, point, lower);
     if (radarSelection) {
-        radarSelection = groups.find(({ clips }) => clips.some((clip) => radarSelection.includes(clip)))?.clips;
+        const selectedGroups = groups.filter(({ clips }) => clips.some((clip) => radarSelection.includes(clip)));
+        radarSelection = selectedGroups.length ? selectedGroups.flatMap(({ clips }) => clips) : undefined;
     }
     for (const { left, top, clips } of groups) {
         const clip = clips[0];
@@ -612,8 +701,10 @@ function renderRadar() {
         marker.setAttribute("aria-label", marker.title);
         if (clips.length > 1) marker.textContent = clips.length;
         marker.addEventListener("click", () => {
-            const next = radarSelection === clips ? clips[(clips.indexOf(selected) + 1) % clips.length] : clips[0];
-            if (radarSelection !== clips) {
+            const active = radarSelection?.length === clips.length && clips.every((item) => radarSelection.includes(item));
+            const next = active ? clips[(clips.indexOf(selected) + 1) % clips.length] : clips[0];
+            if (!active) {
+                playbackScope = undefined;
                 radarSelection = clips;
                 renderRadarLinks();
             }
@@ -787,16 +878,7 @@ function renderClipList(preferred = selected, autoplay = false, playingClip) {
             row.append(cell);
         }
         row.addEventListener("click", () => {
-            const { radar } = currentMatch;
-            if (radar?.lower) {
-                const endpoint = heatmapEnabled ? "impact" : pointSelect.value;
-                const level = clip[endpoint][2] < radar.thresholdZ ? "lower" : "upper";
-                if (level !== levelSelect.value) {
-                    levelSelect.value = level;
-                    renderRadar();
-                }
-            }
-            selectClip(clip, true);
+            playClip(clip);
             if (badge) markWatched(clip, badge);
         });
         fragment.append(row);
@@ -812,6 +894,47 @@ function refreshCalloutLabels() {
         row.querySelector(".clip-callout").textContent = calloutName(visible[Number(row.dataset.index)], currentMatch);
     }
 }
+
+editClipCallout.addEventListener("click", () => {
+    if (!selected?.exportId) return;
+    clipCalloutForm.clip = selected;
+    clipCalloutInput.value = selected.calloutOverride ?? "";
+    clipCalloutInput.placeholder = calloutName({ ...selected, calloutOverride: null }, currentMatch);
+    byId("clip-callout-options").replaceChildren(...[...new Set((currentMatch.zones ?? []).map((zone) => zone.name))]
+        .sort((a, b) => a.localeCompare(b)).map((name) => new Option(name, name)));
+    byId("clip-callout-error").hidden = true;
+    byId("reset-clip-callout").disabled = !selected.calloutOverride;
+    clipCalloutDialog.showModal();
+    clipCalloutInput.focus();
+});
+
+async function saveClipCallout(name) {
+    const clip = clipCalloutForm.clip;
+    if (!clip) return;
+    const controls = [...clipCalloutForm.querySelectorAll("button, input")];
+    for (const control of controls) control.disabled = true;
+    const error = byId("clip-callout-error");
+    error.hidden = true;
+    try {
+        const state = await request("/api/clip-state", { ...clipReference(clip), calloutOverride: name });
+        clip.calloutOverride = state.calloutOverride;
+        refreshCalloutLabels();
+        clipCalloutDialog.close();
+    } catch (failure) {
+        error.textContent = failure.message;
+        error.hidden = false;
+    } finally {
+        for (const control of controls) control.disabled = false;
+        byId("reset-clip-callout").disabled = !clip.calloutOverride;
+    }
+}
+
+clipCalloutForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    saveClipCallout(clipCalloutInput.value.trim());
+});
+byId("reset-clip-callout").addEventListener("click", () => saveClipCallout(null));
+byId("cancel-clip-callout").addEventListener("click", () => clipCalloutDialog.close());
 
 function renderFilters(keepCurrent = false) {
     const bar = byId("types");
@@ -980,6 +1103,13 @@ matchSelect.addEventListener("change", () => {
     switchMatch();
     syncAddress();
 });
+let radarWidth = byId("radar").clientWidth;
+new ResizeObserver(([entry]) => {
+    const width = entry.contentRect.width;
+    if (width <= 0 || Math.abs(width - radarWidth) < 1) return;
+    radarWidth = width;
+    refreshRadarGrouping();
+}).observe(byId("radar"));
 roundSelect.addEventListener("change", () => {
     renderClips();
     syncAddress();
@@ -993,6 +1123,7 @@ for (const control of [pointSelect, levelSelect]) {
 }
 byId("radar").addEventListener("click", (event) => {
     if (radarSelection && !event.target.closest(".marker, .radar-zoom")) {
+        playbackScope = undefined;
         radarSelection = undefined;
         renderRadarLinks();
         renderClipList();
@@ -1067,6 +1198,8 @@ deleteDialog.addEventListener("close", async () => {
         const map = catalogue.matches.find((match) => match.clips.includes(clip));
         const deletion = { clip, row: visible.indexOf(clip), filtered: filtered.indexOf(clip), scroll: list.scrollTop };
         selectionHistory = selectionHistory.filter((item) => item !== clip);
+        playbackIndex -= playbackHistory.slice(0, playbackIndex + 1).filter((item) => item === clip).length;
+        playbackHistory = playbackHistory.filter((item) => item !== clip);
         map.clips = map.clips.filter((item) => item !== clip);
         if (!map.clips.length) {
             catalogue.matches.splice(catalogue.matches.indexOf(map), 1);

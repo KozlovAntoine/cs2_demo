@@ -67,7 +67,11 @@
       </section>
       <div class="details">
         <section id="video-panel" class="panel" aria-labelledby="clip-title">
-          <div class="section-bar"><h2 id="clip-title">Clip</h2><span id="clip-meta"></span></div>
+          <div class="section-bar">
+            <h2 id="clip-title">Clip</h2>
+            <button id="edit-clip-callout" class="zone-button" type="button" hidden>Modifier la zone</button>
+            <span id="clip-meta"></span>
+          </div>
           <div class="player">
             <video id="video" controls playsinline preload="metadata" hidden></video>
             <p id="video-empty" role="status"></p>
@@ -105,6 +109,21 @@
     </div>
   </main>
   <p id="delete-toast" class="toast" role="status"></p>
+  <dialog id="clip-callout-dialog" aria-labelledby="clip-callout-title">
+    <form id="clip-callout-form">
+      <h2 id="clip-callout-title">Zone du lancer</h2>
+      <label class="clip-callout-field" for="clip-callout-name">Zone
+        <input id="clip-callout-name" list="clip-callout-options" maxlength="64" required autocomplete="off">
+      </label>
+      <datalist id="clip-callout-options"></datalist>
+      <p id="clip-callout-error" role="alert" hidden></p>
+      <div class="dialog-actions">
+        <button id="cancel-clip-callout" class="zone-button" type="button">Annuler</button>
+        <button id="reset-clip-callout" class="zone-button" type="button">Automatique</button>
+        <button class="zone-button zone-save" type="submit">Enregistrer</button>
+      </div>
+    </form>
+  </dialog>
   <dialog id="callout-editor" aria-labelledby="callout-title">
     <div class="callout-heading">
       <h2 id="callout-title">Zones de callout</h2>

@@ -346,7 +346,7 @@ class Handler(BaseHTTPRequestHandler):
                         except (ValueError, OSError):
                             match["zones"] = []
             script = ("window.utilityLibrary = true;\nwindow.utilityPortrait = true;\nwindow.utilityClipState = true;\n"
-                      "window.utilityCallouts = true;\n"
+                      "window.utilityCallouts = true;\nwindow.utilityClipCallout = true;\n"
                       f"{CATALOGUE_PREFIX}{json.dumps(data, ensure_ascii=True)};\n")
             self.send_bytes(script.encode("ascii"), "text/javascript")
         else:

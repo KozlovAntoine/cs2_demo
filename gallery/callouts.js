@@ -70,6 +70,7 @@ function zonesOverlap(first, second) {
 }
 
 function calloutName(clip, match) {
+    if (typeof clip.calloutOverride === "string" && clip.calloutOverride.trim()) return clip.calloutOverride;
     const radar = match?.radar;
     if (!radar || !clip.impact) return "À définir";
     const level = radar.lower && clip.impact[2] < radar.thresholdZ ? "lower" : "upper";

@@ -128,6 +128,9 @@ dialog p { color: var(--muted); margin-top: 7px; overflow-wrap: anywhere; }
 .zone-save:hover:enabled { background: #2b674a; }
 .zone-cancel:enabled { background: #583719; border-color: #a36a36; color: #ffe5c9; }
 .zone-cancel:hover:enabled { background: #704724; }
+.clip-callout-field { display: grid; gap: 6px; margin-top: 14px; }
+#clip-callout-name { width: 100%; min-width: 0; padding: 7px; border: 1px solid var(--edge); border-radius: 5px; background: #10151c; color: inherit; font: inherit; }
+#clip-callout-error { color: #ffc7bd; }
 #callout-editor { width: min(990px, 96vw); max-width: none; max-height: 94dvh; padding: 14px; }
 .callout-heading { margin-bottom: 12px; }
 .callout-heading h2 { margin-right: auto; }

@@ -15,7 +15,7 @@ from pathlib import Path, PurePosixPath
 from clip_library import CATALOGUE_PREFIX, record_throw_usage, throw_references
 from demo_imports import demo_fingerprint, read_demo_imports, record_demo_import
 from grenade_data import KINDS, read_clips
-from throw_groups import RADAR_GROUP_RADIUS, group_throws
+from throw_groups import RADAR_GROUP_RADIUS, THROW_GROUP_SIZE_UNITS, group_throws
 from throw_inputs import add_throw_inputs
 
 
@@ -232,7 +232,8 @@ def publish_videos(render_folder, clips, out, map_number):
 def publish_gallery(out, source, matches):
     for file_name in ("index.html", "gallery.css", "gallery.js", "callouts.js"):
         shutil.copyfile(ROOT / "gallery" / file_name, out / file_name)
-    catalogue = {"title": source.name, "groupRadius": RADAR_GROUP_RADIUS, "matches": matches}
+    catalogue = {"title": source.name, "groupRadius": RADAR_GROUP_RADIUS,
+                 "groupBoxUnits": THROW_GROUP_SIZE_UNITS, "matches": matches}
     temporary = out / ".catalogue.js.tmp"
     try:
         temporary.write_text(CATALOGUE_PREFIX + json.dumps(catalogue, ensure_ascii=True) + ";\n", encoding="utf-8")
