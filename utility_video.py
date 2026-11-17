@@ -12,7 +12,7 @@ from collections import Counter
 from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 
-from clip_library import CATALOGUE_PREFIX, library_catalogue, record_throw_usage
+from clip_library import CATALOGUE_PREFIX, record_throw_usage, throw_references
 from demo_imports import demo_fingerprint, read_demo_imports, record_demo_import
 from grenade_data import KINDS, read_clips
 from throw_groups import RADAR_GROUP_RADIUS, group_throws
@@ -332,10 +332,9 @@ def export_demos(args, source, installation, out, work, update, from_app, on_imp
             finish_demo(demo, fingerprint)
             continue
         radar = radar_layout(map_name, installation)
-        existing = next((item for item in library_catalogue(out.parent)["matches"] if item["map"] == map_name), {})
-        previous = [*existing.get("clips", ()),
-                    *(clip for match in matches if match["map"] == map_name for clip in match["clips"])]
-        unique, usage_counts = group_throws(clips, previous, existing.get("radar") or radar)
+        saved_radar, previous, removed = throw_references(out.parent, map_name)
+        previous.extend(clip for match in matches if match["map"] == map_name for clip in match["clips"])
+        unique, usage_counts = group_throws(clips, previous, saved_radar or radar, removed=removed)
         skipped = len(clips) - len(unique)
         duplicate_count += skipped
         if skipped:
@@ -408,7 +407,7 @@ def generate_export(args, output, report, on_import=None):
                 out.rmdir()
     if gallery is None:
         if duplicate_count:
-            update("Terminé", "Aucun nouveau clip à générer. Les lancers correspondent déjà à la vidéothèque.")
+            update("Terminé", "Aucun nouveau clip à générer. Tous les lancers correspondants sont déjà connus.")
             return None
         raise ValueError("Aucun lancer correspondant au filtre dans les démos sélectionnées.")
     update("Terminé", f"Galerie : {gallery}")

@@ -11,6 +11,7 @@ from throw_groups import RADAR_GROUP_RADIUS
 CATALOGUE_PREFIX = "window.utilityCatalogue = "
 EXPORT_NAME = re.compile(r"[\w-]+")
 CLIP_NAME = re.compile(r"[\w-]+\.mp4")
+CLIP_VIDEO = re.compile(r"clips/[\w-]+\.mp4")
 CLIP_FLAGS = ("favorite", "watched")
 
 
@@ -95,6 +96,22 @@ def record_throw_usage(folder, filename, demo, count):
         temporary.unlink(missing_ok=True)
 
 
+def throw_references(output, map_name):
+    radar = None
+    clips = []
+    removed = []
+    for folder, _, data in sorted(completed_catalogues(output), key=lambda item: item[1], reverse=True):
+        for match in data["matches"]:
+            if match["map"] != map_name:
+                continue
+            radar = radar or match.get("radar")
+            # Use one catalogue snapshot so a concurrent deletion cannot hide a throw.
+            clips.extend({**clip, "exportId": folder.name} for clip in match["clips"]
+                         if CLIP_VIDEO.fullmatch(clip.get("video", "")))
+            removed.extend(match.get("removedThrows", ()))
+    return radar, clips, removed
+
+
 def library_catalogue(output):
     maps = {}
     for folder, _, data in sorted(completed_catalogues(output), key=lambda item: item[1], reverse=True):
@@ -104,7 +121,7 @@ def library_catalogue(output):
             clips = []
             for clip in match["clips"]:
                 video = clip.get("video", "")
-                if not re.fullmatch(r"clips/[\w-]+\.mp4", video) or not (folder / video).is_file():
+                if not CLIP_VIDEO.fullmatch(video) or not (folder / video).is_file():
                     continue
                 filename = Path(video).name
                 state = states.get(filename, {})
@@ -175,9 +192,14 @@ def delete_clip(output, export_id, filename):
     original = manifest.read_bytes()
     removed = False
     for match in catalogue["matches"]:
-        clips = [clip for clip in match["clips"] if clip.get("video") != f"clips/{filename}"]
-        removed |= len(clips) != len(match["clips"])
-        match["clips"] = clips
+        remaining = []
+        for clip in match["clips"]:
+            if clip.get("video") == f"clips/{filename}":
+                match.setdefault("removedThrows", []).append({key: clip[key] for key in ("kind", "launch", "impact")})
+                removed = True
+            else:
+                remaining.append(clip)
+        match["clips"] = remaining
     if not removed:
         return
 
