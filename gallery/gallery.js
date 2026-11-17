@@ -35,6 +35,7 @@ const list = byId("clips");
 const deleteButton = byId("delete-clip");
 const favoriteButton = byId("favorite-clip");
 const deleteDialog = byId("confirm-delete");
+const deleteToast = byId("delete-toast");
 const clipActions = byId("clip-actions");
 const portraitButton = byId("portrait-action");
 const throwControls = byId("throw-controls");
@@ -51,6 +52,7 @@ let radarSelection;
 let selected;
 let selectionHistory = [];
 let clipToDelete;
+let deleteToastTimer;
 let portraitTimer;
 let portraitState;
 let portraitPending = false;
@@ -319,6 +321,16 @@ function showLineup(clip) {
     copyStatus.textContent = hasCommand ? "" : "Position et angle indisponibles pour ce clip.";
 }
 
+function renderClipTitle(clip) {
+    const title = byId("clip-title");
+    if (!clip) {
+        title.textContent = "Clip";
+        return;
+    }
+    const location = library ? calloutName(clip, currentMatch) : clip.player;
+    title.textContent = `${kinds[clip.kind].label} · ${location}`;
+}
+
 function selectClip(clip, autoplay = false) {
     const changed = selected !== clip;
     if (selected !== clip || !video.getAttribute("src")) {
@@ -327,12 +339,11 @@ function selectClip(clip, autoplay = false) {
         video.hidden = !clip?.video;
         detail.hidden = Boolean(clip?.video);
         if (clip?.video) video.src = clip.video;
+        renderClipTitle(clip);
         if (!clip) {
             detail.textContent = "Aucun clip pour ce filtre.";
-            byId("clip-title").textContent = "Clip";
             byId("clip-meta").textContent = "";
         } else {
-            byId("clip-title").textContent = `${kinds[clip.kind].label} · ${clip.player}`;
             byId("clip-meta").textContent = `R${clip.round} · ${clip.duration.toLocaleString("fr-FR")} s${clip.estimated ? " · fin estimée" : ""}`;
             const badge = frequencyBadge(clip, true);
             if (badge) byId("clip-meta").append(" ", badge);
@@ -662,6 +673,7 @@ function renderClipList(preferred = selected, autoplay = false, playingClip) {
 }
 
 function refreshCalloutLabels() {
+    renderClipTitle(selected);
     for (const row of list.querySelectorAll(".clip-row")) {
         row.querySelector(".clip-callout").textContent = calloutName(visible[Number(row.dataset.index)], currentMatch);
     }
@@ -870,6 +882,9 @@ deleteDialog.addEventListener("close", async () => {
     deleteButton.disabled = true;
     const status = byId("delete-status");
     status.hidden = true;
+    status.textContent = "";
+    clearTimeout(deleteToastTimer);
+    deleteToast.textContent = "";
     if (selected === clip) {
         video.pause();
         video.removeAttribute("src");
@@ -891,12 +906,13 @@ deleteDialog.addEventListener("close", async () => {
             renderClips(deletion);
         }
         syncAddress(true);
-        status.textContent = "Clip supprimé.";
+        deleteToast.textContent = "Clip supprimé";
+        deleteToastTimer = setTimeout(() => { deleteToast.textContent = ""; }, 3000);
     } catch (error) {
         selectClip(selected);
         status.textContent = error.message;
-    } finally {
         status.hidden = false;
+    } finally {
         deleteButton.disabled = false;
     }
 });
