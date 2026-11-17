@@ -41,25 +41,57 @@ function refreshControls() {
     choose.textContent = picking ? "Sélection en cours…" : "Parcourir…";
 }
 
+function importedLabel(demos) {
+    const count = demos.filter((entry) => entry.imported).length;
+    if (!count) return "";
+    return count === demos.length ? "Déjà importé" : `Déjà importé · ${count}/${demos.length}`;
+}
+
+function updateSelectionBadge() {
+    const sources = selected?.sources ?? [];
+    const entries = sources.length === 1 ? sources[0].demos : [];
+    const label = importedLabel(demo.value ? entries.filter((entry) => entry.member === demo.value) : entries);
+    const badge = byId("source-imported");
+    badge.textContent = label;
+    badge.hidden = !label;
+}
+
 function selectSource(selection) {
-    if (selected?.id === selection?.id) return;
+    const sameSelection = selected?.id === selection?.id;
+    if (sameSelection && selected?.revision === selection?.revision) return;
+    const previousMember = sameSelection ? demo.value : "";
     selected = selection;
-    const names = selected?.names ?? (selected?.name ? [selected.name] : []);
-    const multiple = names.length > 1;
-    byId("chosen").textContent = multiple ? `${names.length} fichiers sélectionnés` : names[0] ?? "Aucun fichier sélectionné";
+    const sources = selected?.sources ?? [];
+    const multiple = sources.length > 1;
+    const first = sources[0];
+    byId("chosen").textContent = multiple ? `${sources.length} fichiers sélectionnés` : first?.name ?? "Aucun fichier sélectionné";
     const files = byId("source-files");
     files.hidden = !multiple;
-    const items = multiple ? names.map((name) => {
+    const items = multiple ? sources.map((source) => {
         const item = document.createElement("li");
-        item.textContent = name;
+        item.textContent = source.name;
+        const label = importedLabel(source.demos);
+        if (label) {
+            const badge = document.createElement("span");
+            badge.className = "imported-badge";
+            badge.textContent = label;
+            item.append(" ", badge);
+        }
         return item;
     }) : [];
     files.replaceChildren(...items);
+    const members = multiple ? [] : (first?.demos ?? []).filter((entry) => entry.member !== null);
     demo.replaceChildren(new Option("Toutes les démos", ""));
-    for (const name of selected?.demos ?? []) demo.add(new Option(name, name));
-    byId("demo-field").hidden = (selected?.demos?.length ?? 0) < 2;
+    for (const { member, imported } of members) {
+        demo.add(new Option(imported ? `${member} · Déjà importé` : member, member));
+    }
+    demo.value = previousMember;
+    byId("demo-field").hidden = members.length < 2;
+    updateSelectionBadge();
     refreshControls();
 }
+
+demo.addEventListener("change", updateSelectionBadge);
 
 function displayJob(job) {
     const running = job.state === "running";

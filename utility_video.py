@@ -13,6 +13,7 @@ from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 
 from clip_library import CATALOGUE_PREFIX, library_catalogue, record_throw_usage
+from demo_imports import demo_fingerprint, read_demo_imports, record_demo_import
 from grenade_data import KINDS, read_clips
 from throw_groups import RADAR_GROUP_RADIUS, group_throws
 from throw_inputs import add_throw_inputs
@@ -71,18 +72,21 @@ def seven_zip_command():
 def describe_archive(path):
     result = run([seven_zip_command(), "l", "-ba", "-slt", "-sccUTF-8", path], capture_output=True,
                  encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL, timeout=20)
-    members = set()
-    for line in result.stdout.splitlines():
-        if line.startswith("Path = "):
-            member = PurePosixPath(line.removeprefix("Path = ").replace("\\", "/"))
-            if member.suffix.lower() == ".dem" and not member.is_absolute() and ".." not in member.parts:
-                members.add(member.as_posix())
+    members = {}
+    for entry in re.split(r"\n(?=Path = )", result.stdout):
+        fields = dict(line.split(" = ", 1) for line in entry.splitlines() if " = " in line)
+        member = PurePosixPath(fields.get("Path", "").replace("\\", "/"))
+        if (fields.get("Folder") == "+" or member.suffix.lower() != ".dem"
+                or member.is_absolute() or ".." in member.parts):
+            continue
+        size, crc = fields.get("Size", ""), fields.get("CRC", "").upper()
+        members[member.as_posix()] = (int(size), crc) if size.isdecimal() and crc else None
     if not members:
         raise ValueError("Cette archive ne contient aucune démo .dem.")
-    return sorted(members)
+    return dict(sorted(members.items()))
 
 
-def load_demos(source, work, map_filter, member=None):
+def load_demos(source, work, map_filter, members=()):
     demos = work / "demos"
     demos.mkdir()
     if source.suffix.lower() == ".dem":
@@ -95,9 +99,8 @@ def load_demos(source, work, map_filter, member=None):
     if source.suffix.lower() != ".rar":
         raise ValueError("Sélectionne un fichier .dem ou une archive .rar.")
     command = [seven_zip_command(), "x", "-y", f"-o{demos}"]
-    if member:
-        member_filter = member.replace("/", os.sep)
-        command.extend(["-spd", source, "--", member_filter])
+    if members:
+        command.extend(["-spd", source, "--", *(member.replace("/", os.sep) for member in members)])
     else:
         command.extend([source, "*.dem", "-r"])
     run(command)
@@ -105,11 +108,31 @@ def load_demos(source, work, map_filter, member=None):
                    and path.resolve().is_relative_to(demos))
     if map_filter:
         found = [path for path in found if map_filter.casefold() in path.stem.casefold()]
-    if member:
-        found = [path for path in found if path.relative_to(demos).as_posix() == member]
+    if members:
+        found = [path for path in found if path.relative_to(demos).as_posix() in members]
     if not found:
         raise ValueError("Aucune démo ne correspond à la sélection.")
     return found
+
+
+def inspect_demo_source(source, imports):
+    if source.suffix.lower() == ".dem":
+        size = source.stat().st_size
+        imported = any(size == info[0] for info in imports.values()) and demo_fingerprint(source)[0] in imports
+        return [{"member": None, "imported": imported}]
+
+    members = describe_archive(source)
+    # Use the RAR directory to shortlist candidates. Only the SHA-256 can confirm a match.
+    known_files = {tuple(info) for info in imports.values()}
+    candidates = [member for member, info in members.items() if imports and (info is None or info in known_files)]
+    imported = set()
+    if candidates:
+        with tempfile.TemporaryDirectory(prefix="cs2-import-") as temp:
+            work = Path(temp).resolve()
+            for demo in load_demos(source, work, None, candidates):
+                if demo_fingerprint(demo)[0] in imports:
+                    imported.add(demo.relative_to(work / "demos").as_posix())
+    return [{"member": member, "imported": member in imported} for member in members]
 
 
 def radar_layout(map_name, installation):
@@ -260,11 +283,11 @@ def reserve_export(output):
         yield
 
 
-def generate(args, report=None):
+def generate(args, report=None, on_import=None):
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     with reserve_export(output):
-        return generate_export(args, output, report)
+        return generate_export(args, output, report, on_import)
 
 
 def remove_work_directory(path, parent):
@@ -278,21 +301,35 @@ def release_staged_demo(demo, work):
         demo.unlink(missing_ok=True)
 
 
-def export_demos(args, source, installation, out, work, update, from_app):
+def export_demos(args, source, installation, out, work, update, from_app, on_import):
     if source.suffix.lower() == ".rar":
         update("Extraction", f"Extraction des démos de {source.name}…")
-    demos = load_demos(source, work, args.map, getattr(args, "demo_member", None))
+    member = getattr(args, "demo_member", None)
+    demos = load_demos(source, work, args.map, (member,) if member else ())
+    imports = read_demo_imports(out.parent) if not args.prepare else {}
     matches = []
     gallery = None
     duplicate_count = 0
+
+    def finish_demo(demo, fingerprint):
+        if args.prepare:
+            return
+        release_staged_demo(demo, work)
+        record_demo_import(out.parent, imports, *fingerprint)
+        if on_import is not None:
+            member = demo.relative_to(work / "demos").as_posix() if source.suffix.lower() == ".rar" else None
+            on_import(source, member)
+
     for map_number, demo in enumerate(demos, 1):
         progress = f"{map_number}/{len(demos)}"
         update("Analyse", f"Démo {progress} · {demo.name}")
+        fingerprint = demo_fingerprint(demo) if not args.prepare else None
+        if fingerprint and fingerprint[0] in imports:
+            update("Analyse", f"{demo.name} · Déjà importé.")
         map_name, tick_rate, clips, checksum = analyze_demo(installation, demo, args.type, work)
         if not clips:
             update("Analyse", f"{map_name} : aucun lancer correspondant.")
-            if not args.prepare:
-                release_staged_demo(demo, work)
+            finish_demo(demo, fingerprint)
             continue
         radar = radar_layout(map_name, installation)
         existing = next((item for item in library_catalogue(out.parent)["matches"] if item["map"] == map_name), {})
@@ -311,8 +348,7 @@ def export_demos(args, source, installation, out, work, update, from_app):
                     record_throw_usage(folder, Path(clip["video"]).name, checksum, count)
         clips = unique[:args.limit]
         if not clips:
-            if not args.prepare:
-                release_staged_demo(demo, work)
+            finish_demo(demo, fingerprint)
             continue
         try:
             add_throw_inputs(demo, clips, tick_rate)
@@ -344,11 +380,11 @@ def export_demos(args, source, installation, out, work, update, from_app):
         gallery = publish_gallery(out, source, matches)
         if not args.prepare:
             remove_work_directory(config.parent, work)
-            release_staged_demo(demo, work)
+        finish_demo(demo, fingerprint)
     return gallery, duplicate_count
 
 
-def generate_export(args, output, report):
+def generate_export(args, output, report, on_import=None):
     def update(phase, message):
         if report is not None:
             report(phase, message)
@@ -364,7 +400,7 @@ def generate_export(args, output, report):
     gallery = None
     try:
         update("Préparation", f"Dossier de la galerie : {out}")
-        gallery, duplicate_count = export_demos(args, source, installation, out, work, update, report is not None)
+        gallery, duplicate_count = export_demos(args, source, installation, out, work, update, report is not None, on_import)
     finally:
         if not args.prepare or gallery is None:
             remove_work_directory(work, out)

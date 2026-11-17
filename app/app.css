@@ -40,7 +40,9 @@ fieldset { padding: 0; margin: 0; border: 0; min-width: 0; }
 .field { display: grid; gap: 6px; margin-bottom: 14px; }
 .field > span { font-size: .87rem; font-weight: 650; }
 .selection { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 49px; padding: 5px 5px 5px 10px; border: 1px solid var(--edge); border-radius: 6px; background: #13191e; }
+.source-name { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 7px; min-width: 0; }
 #chosen { color: var(--muted); min-width: 0; overflow-wrap: anywhere; font-weight: 400; }
+.imported-badge { display: inline-block; border-radius: 4px; padding: 1px 6px; color: #ffc17b; background: #49311f; font-size: .8rem; white-space: nowrap; }
 .source-files { max-height: 105px; overflow-y: auto; margin: 0; padding: 2px 0 2px 22px; color: var(--muted); font-size: .84rem; overflow-wrap: anywhere; }
 #choose { flex: 0 0 auto; }
 select, input { width: 100%; min-height: 39px; border: 1px solid var(--edge); border-radius: 6px; padding: 6px 9px; color: #eff1f3; background: #13191e; }

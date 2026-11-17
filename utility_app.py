@@ -17,13 +17,16 @@ from urllib.request import urlopen
 from uuid import uuid4
 
 from callout_zones import change_zone, read_zones
+from demo_imports import read_demo_imports
 from grenade_data import KINDS
 from clip_library import (
     CATALOGUE_PREFIX, clip_paths, delete_clip, existing_galleries, export_url, find_library_clip, library_catalogue,
     set_clip_state,
 )
 from portrait_video import existing_portrait, generate_portrait, portrait_folder
-from utility_video import CALIBRATION, ROOT, describe_archive, find_csdm, generate, generate_export, radar_layout, reserve_export, run
+from utility_video import (
+    CALIBRATION, ROOT, find_csdm, generate, generate_export, inspect_demo_source, radar_layout, reserve_export, run,
+)
 
 
 APP_ID = "cs2-utility-videos"
@@ -110,12 +113,20 @@ class App:
             paths = tuple(dict.fromkeys(Path(name).resolve(strict=True) for name in chosen))
             if any(not path.is_file() or path.suffix.lower() not in (".dem", ".rar") for path in paths):
                 raise ValueError("Sélectionne des fichiers .dem ou des archives .rar.")
-            first = paths[0]
-            demos = describe_archive(first) if len(paths) == 1 and first.suffix.lower() == ".rar" else []
+            imports = read_demo_imports(self.output)
+            sources = []
+            for path in paths:
+                try:
+                    demos = inspect_demo_source(path, imports)
+                except (OSError, ValueError, subprocess.SubprocessError):
+                    if len(paths) == 1:
+                        raise
+                    # Batch exports report unreadable files individually.
+                    demos = []
+                sources.append({"name": path.name, "demos": demos})
             with self.lock:
                 self.selected_paths = paths
-                self.selection = {"id": uuid4().hex, "name": first.name if len(paths) == 1 else f"{len(paths)} fichiers sélectionnés",
-                                  "names": [path.name for path in paths], "demos": demos}
+                self.selection = {"id": uuid4().hex, "revision": 0, "sources": sources}
                 return {"selection": self.selection}
         finally:
             with self.lock:
@@ -132,8 +143,10 @@ class App:
             limit = data.get("limit")
             if kind not in ("all", *KINDS.values()):
                 raise ValueError("Type d’utilitaire invalide.")
-            if member is not None and member not in self.selection["demos"]:
-                raise ValueError("Cette démo ne fait pas partie de l’archive sélectionnée.")
+            if member is not None:
+                sources = self.selection["sources"]
+                if len(sources) != 1 or not any(demo["member"] == member for demo in sources[0]["demos"]):
+                    raise ValueError("Cette démo ne fait pas partie de l’archive sélectionnée.")
             if limit is not None and (type(limit) is not int or limit < 1):
                 raise ValueError("La limite de clips doit être un entier supérieur à zéro.")
             paths = self.selected_paths
@@ -143,11 +156,21 @@ class App:
 
             def render_export(report):
                 if len(paths) == 1:
-                    gallery = generate(options, report)
+                    gallery = generate(options, report, self.mark_demo_imported)
                     return {"url": export_url(gallery.parent) + "/index.html"} if gallery else {}
                 return self.render_batch(paths, options, report)
 
             return self.start_job(render_export)
+
+    def mark_demo_imported(self, path, member):
+        with self.lock:
+            sources = self.selection["sources"].copy()
+            index = self.selected_paths.index(path)
+            source = sources[index]
+            demos = [{**demo, "imported": True} if demo["member"] == member else demo for demo in source["demos"]]
+            if demos != source["demos"]:
+                sources[index] = {**source, "demos": demos}
+                self.selection = {**self.selection, "sources": sources, "revision": self.selection["revision"] + 1}
 
     def render_batch(self, paths, options, report):
         last_gallery = None
@@ -162,7 +185,7 @@ class App:
                     report("Export des démos" if phase == "Terminé" else phase, f"{label} · {message}")
 
                 try:
-                    gallery = generate_export(options, self.output, report_file)
+                    gallery = generate_export(options, self.output, report_file, self.mark_demo_imported)
                     last_gallery = gallery or last_gallery
                 except (OSError, ValueError, subprocess.SubprocessError) as error:
                     errors.append(f"{label} · {error_message(error)}")

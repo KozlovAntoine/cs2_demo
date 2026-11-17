@@ -24,7 +24,10 @@
           <div class="field">
             <span class="label" id="source-label">Démos ou archives HLTV</span>
             <div class="selection">
-              <span id="chosen" aria-live="polite">Aucun fichier sélectionné</span>
+              <div class="source-name" aria-live="polite">
+                <span id="chosen">Aucun fichier sélectionné</span>
+                <span id="source-imported" class="imported-badge" hidden></span>
+              </div>
               <button class="secondary" id="choose" type="button" aria-describedby="source-label chosen">Parcourir…</button>
             </div>
             <ul id="source-files" class="source-files" aria-label="Fichiers sélectionnés" hidden></ul>
