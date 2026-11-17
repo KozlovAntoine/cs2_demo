@@ -22,6 +22,53 @@ function compareZoneLayers(a, b) {
     return (a.priority ?? 0) - (b.priority ?? 0) || b.area - a.area;
 }
 
+function zonesOverlap(first, second) {
+    const a = first.points;
+    const b = second.points;
+    const ax = a.map(([x]) => x);
+    const bx = b.map(([x]) => x);
+    const left = Math.max(Math.min(...ax), Math.min(...bx));
+    const right = Math.min(Math.max(...ax), Math.max(...bx));
+    const ay = a.map(([, y]) => y);
+    const by = b.map(([, y]) => y);
+    if (left >= right || Math.max(Math.min(...ay), Math.min(...by)) >= Math.min(Math.max(...ay), Math.max(...by))) return false;
+
+    const cross = ([x, y], [u, v], [p, q]) => (u - x) * (q - y) - (v - y) * (p - x);
+    for (let i = 0; i < a.length; i++) {
+        const startA = a[i];
+        const endA = a[(i + 1) % a.length];
+        for (let j = 0; j < b.length; j++) {
+            const startB = b[j];
+            const endB = b[(j + 1) % b.length];
+            if (cross(startA, endA, startB) * cross(startA, endA, endB) < 0
+                && cross(startB, endB, startA) * cross(startB, endB, endA) < 0) return true;
+        }
+    }
+
+    // Without edge crossings, testing between vertex X coordinates covers containment and shared edges.
+    function section(points, x) {
+        const intersections = [];
+        for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
+            const [u, v] = points[j];
+            const [p, q] = points[i];
+            if ((u > x) !== (p > x)) intersections.push(v + (q - v) * (x - u) / (p - u));
+        }
+        return intersections.sort((u, v) => u - v);
+    }
+    const cuts = [...new Set([left, right, ...ax, ...bx].filter((x) => x >= left && x <= right))].sort((u, v) => u - v);
+    for (let i = 1; i < cuts.length; i++) {
+        const x = (cuts[i - 1] + cuts[i]) / 2;
+        const ysA = section(a, x);
+        const ysB = section(b, x);
+        for (let j = 0; j < ysA.length; j += 2) {
+            for (let k = 0; k < ysB.length; k += 2) {
+                if (Math.min(ysA[j + 1], ysB[k + 1]) - Math.max(ysA[j], ysB[k]) > 1e-7) return true;
+            }
+        }
+    }
+    return false;
+}
+
 function calloutName(clip, match) {
     const radar = match?.radar;
     if (!radar || !clip.impact) return "À définir";
@@ -51,8 +98,7 @@ function initializeCalloutEditor({ matches, currentMatch, currentClip, changed }
     const undo = byId("undo-vertex");
     const closeShape = byId("close-zone-shape");
     const resume = byId("resume-zone");
-    const front = byId("zone-front");
-    const back = byId("zone-back");
+    const layerList = byId("zone-layer-list");
     const accept = form.querySelector('button[type="submit"]');
     const maps = new Map();
     let editing;
@@ -60,6 +106,8 @@ function initializeCalloutEditor({ matches, currentMatch, currentClip, changed }
     let activePolygon;
     let saving = false;
     let confirmDelete = false;
+    let draggedLayer;
+    let dropTarget;
 
     function shape(tag, attributes, parent = overlay) {
         const element = document.createElementNS("http://www.w3.org/2000/svg", tag);
@@ -76,18 +124,45 @@ function initializeCalloutEditor({ matches, currentMatch, currentClip, changed }
     function previewZones(zones, radar) {
         if (!editing?.closed) return zones;
         const original = zones.find((zone) => zone.id === editing.id);
-        const others = zones.filter((zone) => zone !== original);
-        const priorities = [0, ...others.map((zone) => zone.priority ?? 0)];
-        let priority = original?.priority ?? 0;
-        if (editing.placement === "front") priority = Math.max(...priorities) + 1;
-        if (editing.placement === "back") priority = Math.min(...priorities) - 1;
         const area = original && !editing.moved ? original.area : Math.abs(editing.points.reduce((sum, [x, y], index, points) => {
             const [nextX, nextY] = points[(index + 1) % points.length];
             return sum + x * nextY - y * nextX;
         }, 0)) / 2 * (radar.units / 100) ** 2;
-        const preview = { ...original, area, priority, preview: true };
+        const preview = { ...original, area, preview: true };
         return original
             ? zones.map((zone) => zone === original ? preview : zone) : [...zones, preview];
+    }
+
+    function renderLayers(zones) {
+        const focus = layerList.contains(document.activeElement) ? document.activeElement.dataset.layer : undefined;
+        const scroll = layerList.scrollTop;
+        const selectedZone = zones.find((zone) => zone.id === editing?.id);
+        const ordered = selectedZone ? zones.filter((zone) => zone === selectedZone || zonesOverlap(selectedZone, zone))
+            .sort((a, b) => compareZoneLayers(b, a)) : [];
+        byId("zone-layers").hidden = ordered.length < 2;
+        layerList.replaceChildren(...ordered.map((zone, index) => {
+            const item = document.createElement("li");
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "zone-layer";
+            button.dataset.layer = zone.id;
+            button.draggable = !saving && ordered.length > 1;
+            button.setAttribute("aria-pressed", String(zone.id === editing?.id));
+            button.setAttribute("aria-keyshortcuts", "ArrowUp ArrowDown");
+            const number = document.createElement("span");
+            number.className = "layer-number";
+            number.textContent = `${index + 1} –`;
+            const grip = document.createElement("span");
+            grip.className = "layer-grip";
+            grip.setAttribute("aria-hidden", "true");
+            grip.textContent = "⠿";
+            grip.hidden = ordered.length < 2;
+            button.append(number, zone.name, grip);
+            item.append(button);
+            return item;
+        }));
+        layerList.scrollTop = scroll;
+        if (focus) [...layerList.querySelectorAll(".zone-layer")].find((item) => item.dataset.layer === focus)?.focus({ preventScroll: true });
     }
 
     function render() {
@@ -109,16 +184,15 @@ function initializeCalloutEditor({ matches, currentMatch, currentClip, changed }
         form.hidden = !editing?.closed;
         remove.hidden = !editing?.id;
         resume.hidden = !(creating && editing.closed);
-        front.setAttribute("aria-pressed", String(editing?.placement === "front"));
-        back.setAttribute("aria-pressed", String(editing?.placement === "back"));
         remove.textContent = confirmDelete ? "Confirmer la suppression" : "Supprimer la zone";
         mapSelect.disabled = floorSelect.disabled = zoneSelect.disabled = newZone.disabled = saving || Boolean(creating);
-        for (const control of [name, accept, remove, resume, front, back, byId("discard-zone"), byId("close-callouts")]) control.disabled = saving;
+        for (const control of [name, accept, remove, resume, byId("discard-zone"), byId("close-callouts")]) control.disabled = saving;
         closeShape.disabled = !editing || editing.points.length < 3;
         undo.disabled = !editing?.points.length;
         help.textContent = drawing ? "Clique pour placer les sommets. Clique sur le premier sommet pour fermer la zone."
-            : editing ? "Glisse les sommets ou change la superposition, puis enregistre."
+            : editing ? "Glisse les sommets, puis enregistre la zone."
                 : "Sélectionne une zone sur le radar ou dans la liste.";
+        renderLayers(zones);
 
         overlay.replaceChildren();
         activePolygon = undefined;
@@ -147,6 +221,13 @@ function initializeCalloutEditor({ matches, currentMatch, currentClip, changed }
                     "data-first": String(first), "data-vertex": drawing ? "" : index, class: `callout-vertex${type}` });
             });
         }
+    }
+
+    function refreshZones(map, zones) {
+        map.zones = zones;
+        const match = matches.find((item) => item.map === map.map);
+        if (match) match.zones = zones;
+        changed();
     }
 
     function chooseZone(id) {
@@ -189,14 +270,11 @@ function initializeCalloutEditor({ matches, currentMatch, currentClip, changed }
         render();
         try {
             const result = await request("/api/callout-zones", {
-                map: map.map, action, id, name: name.value, level: floorSelect.value, points, placement: editing.placement,
+                map: map.map, action, id, name: name.value, level: floorSelect.value, points,
             });
-            map.zones = result.zones;
-            const match = matches.find((item) => item.map === map.map);
-            if (match) match.zones = result.zones;
+            refreshZones(map, result.zones);
             chooseZone(action === "save" ? result.id : "");
             status.textContent = action === "save" ? "Zone enregistrée." : "Zone supprimée.";
-            changed();
         } catch (error) {
             status.textContent = error.message;
         } finally {
@@ -254,7 +332,7 @@ function initializeCalloutEditor({ matches, currentMatch, currentClip, changed }
     byId("close-callouts").addEventListener("click", () => dialog.close());
     dialog.addEventListener("close", () => chooseZone(""));
     dialog.addEventListener("cancel", (event) => {
-        const editingShape = editing && (!editing.id || editing.moved || editing.placement || drag);
+        const editingShape = editing && (!editing.id || editing.moved || drag);
         if (saving || editingShape) event.preventDefault();
         if (editingShape && !saving) cancel();
     });
@@ -269,13 +347,82 @@ function initializeCalloutEditor({ matches, currentMatch, currentClip, changed }
         status.textContent = "";
         render();
     });
-    for (const [button, placement] of [[front, "front"], [back, "back"]]) {
-        button.addEventListener("click", () => {
-            editing.placement = editing.placement === placement ? undefined : placement;
-            status.textContent = "";
+    async function moveLayer(id, targetId, before) {
+        if (saving || drag || id === targetId) return;
+        const map = maps.get(mapSelect.value);
+        const scope = [...layerList.querySelectorAll(".zone-layer")].map((item) => item.dataset.layer);
+        saving = true;
+        status.textContent = "";
+        render();
+        try {
+            const { zones } = await request("/api/callout-zones", { map: map.map, action: "reorder", id, targetId, before, scope });
+            refreshZones(map, zones);
+            status.textContent = "Ordre enregistré.";
+        } catch (error) {
+            status.textContent = error.message;
+        } finally {
+            saving = false;
             render();
-        });
+        }
     }
+
+    function clearDropTarget() {
+        dropTarget?.classList.remove("drop-before", "drop-after");
+        dropTarget = undefined;
+    }
+
+    function isBefore(event, target) {
+        const bounds = target.getBoundingClientRect();
+        return event.clientY < bounds.top + bounds.height / 2;
+    }
+
+    layerList.addEventListener("dragstart", (event) => {
+        const layer = event.target.closest('.zone-layer[draggable="true"]');
+        if (!layer) return;
+        draggedLayer = layer.dataset.layer;
+        event.dataTransfer.setData("text/plain", draggedLayer);
+        event.dataTransfer.effectAllowed = "move";
+    });
+    layerList.addEventListener("dragover", (event) => {
+        if (!draggedLayer) return;
+        const target = event.target.closest(".zone-layer");
+        clearDropTarget();
+        if (!target || target.dataset.layer === draggedLayer) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+        dropTarget = target;
+        target.classList.add(isBefore(event, target) ? "drop-before" : "drop-after");
+    });
+    layerList.addEventListener("dragleave", (event) => {
+        if (!layerList.contains(event.relatedTarget)) clearDropTarget();
+    });
+    layerList.addEventListener("dragend", () => {
+        draggedLayer = undefined;
+        clearDropTarget();
+    });
+    layerList.addEventListener("drop", (event) => {
+        const target = event.target.closest(".zone-layer");
+        if (!draggedLayer || !target) return;
+        event.preventDefault();
+        const id = draggedLayer;
+        draggedLayer = undefined;
+        clearDropTarget();
+        moveLayer(id, target.dataset.layer, isBefore(event, target));
+    });
+    layerList.addEventListener("keydown", (event) => {
+        const layer = event.target.closest(".zone-layer");
+        if (!layer || !["ArrowUp", "ArrowDown"].includes(event.key)) return;
+        const before = event.key === "ArrowUp";
+        const item = layer.parentElement;
+        const neighbor = before ? item.previousElementSibling : item.nextElementSibling;
+        if (!neighbor) return;
+        event.preventDefault();
+        moveLayer(layer.dataset.layer, neighbor.firstElementChild.dataset.layer, before);
+    });
+    layerList.addEventListener("click", (event) => {
+        const layer = event.target.closest(".zone-layer");
+        if (layer && !saving && (editing?.id || !editing)) chooseZone(layer.dataset.layer);
+    });
 
     const clamp = (value) => Math.max(0, Math.min(100, value));
     function pointerPosition(event) {

@@ -125,10 +125,6 @@
         </div>
         <form id="save-zone" hidden>
           <label>Nom <input id="zone-name" maxlength="64" required></label>
-          <div class="zone-actions" role="group" aria-label="Superposition de la zone">
-            <button id="zone-front" class="zone-button" type="button" aria-pressed="false">Premier plan</button>
-            <button id="zone-back" class="zone-button" type="button" aria-pressed="false">Arrière-plan</button>
-          </div>
           <div class="zone-actions">
             <button class="zone-button" type="submit">Enregistrer</button>
             <button id="resume-zone" class="zone-button" type="button" hidden>Reprendre le tracé</button>
@@ -136,6 +132,11 @@
             <button id="delete-zone" class="delete-clip" type="button">Supprimer la zone</button>
           </div>
         </form>
+        <section id="zone-layers" aria-labelledby="zone-layers-title" hidden>
+          <h3 id="zone-layers-title">Superpositions</h3>
+          <p id="zone-layers-help">Zones qui se chevauchent avec la sélection. Glisse-les pour les réordonner. La nº 1 passe devant.</p>
+          <ol id="zone-layer-list" aria-describedby="zone-layers-help"></ol>
+        </section>
         <p id="callout-help"></p>
         <p id="callout-status" role="status"></p>
       </div>

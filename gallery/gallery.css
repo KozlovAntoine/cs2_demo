@@ -131,6 +131,17 @@ dialog p { color: var(--muted); margin-top: 7px; overflow-wrap: anywhere; }
 .callout-sidebar label { display: grid; gap: 4px; }
 .callout-sidebar select, .callout-sidebar input { width: 100%; min-width: 0; }
 .callout-sidebar input { padding: 7px; border: 1px solid var(--edge); border-radius: 5px; background: #10151c; color: inherit; font: inherit; }
+#zone-layers { min-width: 0; }
+#zone-layers-title { margin: 0; font-size: .88rem; }
+#zone-layers-help { margin: 3px 0 5px; font-size: .78rem; }
+#zone-layer-list { list-style: none; margin: 0; padding: 2px; display: grid; gap: 4px; max-height: min(28vh, 230px); overflow: auto; }
+.zone-layer { display: flex; align-items: center; gap: 6px; width: 100%; padding: 4px 6px; border: 1px solid var(--edge); border-radius: 4px; background: #222b34; text-align: left; font-size: .8rem; overflow-wrap: anywhere; }
+.zone-layer[draggable="true"] { cursor: grab; }
+.zone-layer[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.zone-layer .layer-number { font-variant-numeric: tabular-nums; flex: none; color: var(--muted); }
+.zone-layer .layer-grip { margin-left: auto; color: var(--muted); }
+.zone-layer.drop-before { box-shadow: inset 0 2px var(--accent); }
+.zone-layer.drop-after { box-shadow: inset 0 -2px var(--accent); }
 #callout-help, #callout-status { margin: 0; font-size: .84rem; }
 #callout-status { color: var(--accent); }
 .callout-shape { fill: #89c9f336; stroke: #a4d5f6; stroke-width: 1.5px; vector-effect: non-scaling-stroke; cursor: pointer; }

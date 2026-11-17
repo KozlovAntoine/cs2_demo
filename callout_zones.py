@@ -70,6 +70,25 @@ def change_zone(output, map_name, data):
     existing = next((zone for zone in zones if zone["id"] == zone_id), None)
     if action == "delete" and existing:
         zones.remove(existing)
+    elif action == "reorder" and existing:
+        target_id = data.get("targetId")
+        before = data.get("before")
+        layers = sorted((zone for zone in zones if zone["level"] == existing["level"]),
+                        key=lambda zone: (-zone.get("priority", 0), zone["area"]))
+        scope = data.get("scope", [zone["id"] for zone in layers])
+        if (not isinstance(scope, list) or any(not isinstance(item, str) for item in scope)
+                or len(set(scope)) != len(scope) or not set(scope) <= {zone["id"] for zone in layers}):
+            raise ValueError("La liste des superpositions n’est plus à jour.")
+        selected_layers = [zone for zone in layers if zone["id"] in scope]
+        target = next((zone for zone in selected_layers if zone["id"] == target_id), None)
+        if existing not in selected_layers or not target or target is existing or type(before) is not bool:
+            raise ValueError("La zone de destination doit être sur le même niveau.")
+        selected_layers.remove(existing)
+        selected_layers.insert(selected_layers.index(target) + (not before), existing)
+        reordered = iter(selected_layers)
+        layers = [next(reordered) if zone["id"] in scope else zone for zone in layers]
+        for priority, zone in enumerate(reversed(layers)):
+            zone["priority"] = priority
     elif action == "save":
         name = data.get("name")
         if not isinstance(name, str) or not 1 <= len(name.strip()) <= MAX_NAME_LENGTH:
