@@ -17,7 +17,7 @@ let picking = false;
 let closed = false;
 let galleryPath;
 let lastLibrarySearch = "";
-const ESTIMATED_SECONDS_PER_CLIP = 10;
+const ESTIMATED_SECONDS_PER_CLIP = 13;
 let estimatedJobId;
 let clipFinishEstimates = {};
 
@@ -103,7 +103,8 @@ function estimatedJobMessages(job) {
         clipFinishEstimates = {};
         try {
             const saved = JSON.parse(localStorage.getItem(storageKey));
-            if (saved?.jobId === job.id && saved.finishes && typeof saved.finishes === "object") {
+            if (saved?.jobId === job.id && saved.secondsPerClip === ESTIMATED_SECONDS_PER_CLIP
+                && saved.finishes && typeof saved.finishes === "object") {
                 clipFinishEstimates = saved.finishes;
             }
         } catch { }
@@ -115,7 +116,8 @@ function estimatedJobMessages(job) {
         const count = Number(analysis.match(countPattern)[1]);
         clipFinishEstimates[analysis] = Date.now() + count * ESTIMATED_SECONDS_PER_CLIP * 1000;
         try {
-            localStorage.setItem(storageKey, JSON.stringify({ jobId: job.id, finishes: clipFinishEstimates }));
+            localStorage.setItem(storageKey, JSON.stringify({ jobId: job.id, secondsPerClip: ESTIMATED_SECONDS_PER_CLIP,
+                finishes: clipFinishEstimates }));
         } catch { }
     }
     let captureFinish;
