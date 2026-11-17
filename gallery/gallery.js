@@ -788,6 +788,26 @@ function restoreLibraryAddress() {
     syncAddress(true);
 }
 
+function rememberVideoAudio() {
+    const key = "utilityVideoAudio";
+    try {
+        const saved = JSON.parse(localStorage.getItem(key));
+        if (typeof saved?.volume === "number" && saved.volume >= 0 && saved.volume <= 1) video.volume = saved.volume;
+        if (typeof saved?.muted === "boolean") video.muted = saved.muted;
+    } catch {
+        // Use the player's defaults when the browser cannot read the preference.
+    }
+    video.addEventListener("volumechange", () => {
+        try {
+            localStorage.setItem(key, JSON.stringify({ volume: video.volume, muted: video.muted }));
+        } catch {
+            // Volume controls still work when browser storage is unavailable.
+        }
+    });
+}
+
+rememberVideoAudio();
+
 if (library) {
     document.body.classList.add("library-view");
     document.querySelector("h1").textContent = "Vidéothèque";
