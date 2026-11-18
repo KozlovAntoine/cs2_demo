@@ -45,6 +45,8 @@ Pendant un export, **Pause** demande un arrêt entre deux démos. La démo en ca
 
 Chaque export lancé dans le navigateur écrit un fichier `.log` horodaté dans `exports/logs/`. Un lot de plusieurs démos produit un seul journal. Les rendus 9:16 ont leur propre journal dans le même dossier. Les messages d’avancement, les sorties des outils et le détail des erreurs restent disponibles après la fermeture de l’application et le nettoyage des fichiers de travail.
 
+La capture utilise `libx264`. Avec la copie de travail `.local/csdm` et le plugin Windows de CS Demo Manager 3.21.0 testé, l’export règle la pause de stabilisation avant chaque séquence à 0,5 seconde. Les autres versions utilisent la pause de leur plugin.
+
 Si CS Demo Manager livre un rendu incomplet, l’export conserve les MP4 valides et passe à la démo suivante. Le journal indique le nombre de clips conservés et les séquences manquantes. Réimporte la démo pour générer les lancers restants. Le filtre de doublons tient compte des clips déjà conservés.
 
 La **Vidéothèque** regroupe les exports par carte. Le radar affiche les points d’activation par défaut. Le menu **Points** permet d’afficher les positions de départ. Un point numéroté regroupe des lancers proches. Clique sur un repère pour isoler ses clips et afficher leurs départs ou activations reliés par des pointillés. Clique sur le fond du radar pour retrouver tous les repères et la liste filtrée complète. Le bouton **Supprimer** efface le MP4 sélectionné après confirmation et met à jour le catalogue.
@@ -55,7 +57,7 @@ Sur le radar, les repères se regroupent en foyers à 100 %. En zoomant, chaque 
 
 La vidéothèque compte toutes les occurrences de chaque lancer dans les démos traitées, y compris les doublons ignorés. La moyenne porte sur les parties où le lancer a été observé. Réimporter une démo met à jour son compteur. Le menu **Fréquence** filtre les badges **Rare** (moins de 2), **Commun** (de 2 à 10) et **Très fréquent** (plus de 10). Les seuils `RARE_BELOW` et `COMMON_MAX` dans `gallery/gallery.js` s’appliquent dès l’actualisation de la page. Les clips existants obtiennent une fréquence dès qu’une nouvelle analyse retrouve leur lancer.
 
-Les copies de travail des démos et les fichiers de capture intermédiaires sont nettoyés automatiquement après chaque capture et en cas d’échec. Les `.dem` ou `.rar` d’origine servent aux prochains exports. Les clips restent lisibles depuis leurs MP4.
+Les copies de travail des démos et les fichiers de capture intermédiaires sont nettoyés automatiquement après chaque capture et en cas d’échec. Si l’application ou le PC s’arrête avant le nettoyage, le prochain export supprime les fichiers temporaires signalés par l’export interrompu. Les `.dem` ou `.rar` d’origine servent aux prochains exports. Les clips restent lisibles depuis leurs MP4.
 
 Dans la vidéothèque, sélectionne un lancer et clique sur **Générer vidéo 9:16**. FFmpeg recadre le centre du MP4 existant en 720 × 1280 en conservant les proportions et le son. Après le rendu, **Ouvrir le dossier** donne accès au MP4. Le nom contient le joueur, la carte, le type d’utilitaire et la date du rendu au format `AAAA-MM-JJ HH-MM`.
 

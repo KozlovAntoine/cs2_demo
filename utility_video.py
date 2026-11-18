@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from clip_library import CATALOGUE_PREFIX, record_throw_usage, throw_references
+from csdm_capture_pause import shorten_capture_pause
 from demo_imports import demo_fingerprint, read_demo_imports, record_demo_import
 from grenade_data import KINDS, read_clips
 from job_control import JobCancelled, check_job_cancelled, current_control, job_checkpoint
@@ -24,6 +25,8 @@ from throw_inputs import add_throw_inputs
 
 
 ROOT = Path(__file__).resolve().parent
+PROJECT_CSDM = ROOT / ".local" / "csdm"
+CAPTURE_WORK_MARKER = ".capture-in-progress"
 CALIBRATION = json.loads((ROOT / "radars.json").read_text(encoding="utf-8"))
 
 
@@ -69,7 +72,7 @@ def find_csdm(installation):
         folders.append(local / "Programs" / "CS Demo Manager")
         folders.extend(Path(os.environ[key]) / "CS Demo Manager"
                        for key in ("ProgramW6432", "ProgramFiles", "ProgramFiles(x86)") if os.environ.get(key))
-        folders.append(ROOT / ".local" / "csdm")
+        folders.append(PROJECT_CSDM)
     for folder in folders:
         resources = folder / "resources"
         if ((folder / "cs-demo-manager.exe").is_file() and (resources / "app.asar").exists()
@@ -362,6 +365,27 @@ def remove_work_directory(path, parent):
             time.sleep(0.25)
 
 
+def recover_interrupted_exports(output, update):
+    # Actual exports share a lock. A marked work directory from an earlier run can only be stale.
+    for gallery in output.iterdir():
+        if not gallery.is_dir() or gallery.resolve() != gallery:
+            continue
+        work = gallery / "work"
+        marker = gallery / CAPTURE_WORK_MARKER
+        if work.resolve() != work or not marker.is_file():
+            continue
+        try:
+            if work.exists():
+                remove_work_directory(work, gallery)
+            marker.unlink()
+            if not any(gallery.iterdir()):
+                gallery.rmdir()
+        except OSError as error:
+            update("Nettoyage", f"Cache de {gallery.name} encore inaccessible · {error}")
+        else:
+            update("Nettoyage", f"Fichiers temporaires d’un export interrompu supprimés · {gallery.name}")
+
+
 def release_staged_demo(demo, work):
     if demo.is_relative_to(work / "demos") and demo.resolve() == demo:
         demo.unlink(missing_ok=True)
@@ -489,14 +513,23 @@ def generate_export(args, output, report, on_import=None):
         else:
             print(message, flush=True)
 
+    if not args.prepare:
+        recover_interrupted_exports(output, update)
     source = args.demo.resolve(strict=True)
     installation = find_csdm(args.csdm)
+    if not args.prepare and installation == PROJECT_CSDM:
+        if shorten_capture_pause(installation):
+            update("Préparation", "Capture · libx264 · pause de 0,5 s avec le plugin CS Demo Manager compatible.")
+        else:
+            update("Préparation", "Capture · libx264 · pause du plugin CS Demo Manager installé.")
     prefix = re.sub(r"[^a-zA-Z0-9_-]", "-", source.stem)[:64] + "-"
     out = Path(tempfile.mkdtemp(prefix=prefix, dir=output))
     work = out / "work"
     work.mkdir()
     gallery = None
     try:
+        if not args.prepare:
+            (out / CAPTURE_WORK_MARKER).touch(exist_ok=False)
         update("Préparation", f"Dossier de la galerie : {out}")
         gallery, duplicate_count, failed_demos = export_demos(args, source, installation, out, work, update, on_import)
     except JobCancelled as error:
@@ -506,6 +539,7 @@ def generate_export(args, output, report, on_import=None):
     finally:
         if not args.prepare or gallery is None:
             remove_work_directory(work, out)
+            (out / CAPTURE_WORK_MARKER).unlink(missing_ok=True)
             if not any(out.iterdir()):
                 out.rmdir()
     if gallery is None and not failed_demos:
