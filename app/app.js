@@ -20,6 +20,9 @@ let lastLibrarySearch = "";
 const ESTIMATED_SECONDS_PER_CLIP = 13;
 let estimatedJobId;
 let clipFinishEstimates = {};
+let clipEstimatePauses = {};
+let displayedJob;
+let jobControlPending = false;
 
 async function request(path, payload) {
     const options = payload === undefined ? undefined : {
@@ -101,25 +104,40 @@ function estimatedJobMessages(job) {
     if (estimatedJobId !== job.id) {
         estimatedJobId = job.id;
         clipFinishEstimates = {};
+        clipEstimatePauses = {};
         try {
             const saved = JSON.parse(localStorage.getItem(storageKey));
             if (saved?.jobId === job.id && saved.secondsPerClip === ESTIMATED_SECONDS_PER_CLIP
                 && saved.finishes && typeof saved.finishes === "object") {
                 clipFinishEstimates = saved.finishes;
+                clipEstimatePauses = saved.pauses ?? {};
             }
         } catch { }
     }
     const messages = job.messages ?? [];
     const countPattern = /\b(?:de|cs|ar)_\w+ : (\d+) clips? \(/;
     const analysis = messages.findLast((message) => countPattern.test(message));
+    const pausedMs = job.pausedMs ?? 0;
+    let changed = false;
     if (analysis && job.state === "running" && !Number.isFinite(clipFinishEstimates[analysis])) {
         const count = Number(analysis.match(countPattern)[1]);
         clipFinishEstimates[analysis] = Date.now() + count * ESTIMATED_SECONDS_PER_CLIP * 1000;
+        clipEstimatePauses[analysis] = pausedMs;
+        changed = true;
+    }
+    if (analysis && job.state === "running" && Number.isFinite(clipFinishEstimates[analysis])) {
+        const pauseDelta = Math.max(0, pausedMs - (clipEstimatePauses[analysis] ?? 0));
+        clipFinishEstimates[analysis] += pauseDelta;
+        clipEstimatePauses[analysis] = pausedMs;
+        changed ||= pauseDelta > 0;
+    }
+    if (changed) {
         try {
             localStorage.setItem(storageKey, JSON.stringify({ jobId: job.id, secondsPerClip: ESTIMATED_SECONDS_PER_CLIP,
-                finishes: clipFinishEstimates }));
+                finishes: clipFinishEstimates, pauses: clipEstimatePauses }));
         } catch { }
     }
+    if (job.paused || job.cancelRequested) return messages;
     let captureFinish;
     return messages.map((message) => {
         if (countPattern.test(message)) captureFinish = clipFinishEstimates[message];
@@ -131,13 +149,17 @@ function estimatedJobMessages(job) {
 }
 
 function displayJob(job) {
+    displayedJob = job;
     const running = job.state === "running";
     working = running;
     byId("working").hidden = !running;
-    byId("working").textContent = running ? `${job.phase} en cours` : "";
+    const stateLabel = job.cancelRequested ? "Annulation en cours" : job.paused ? "En pause"
+        : job.pauseRequested ? "Pause demandée" : running ? `${job.phase} en cours` : "";
+    byId("working").textContent = stateLabel;
     byId("status").hidden = job.state === "idle";
-    byId("spinner").hidden = !running;
-    const phase = job.state === "error" ? "Export interrompu" : job.phase ?? "";
+    byId("spinner").hidden = !running || job.paused;
+    const phase = job.state === "error" ? "Export interrompu"
+        : job.cancelRequested || job.paused || job.pauseRequested ? stateLabel : job.phase ?? "";
     if (byId("phase").textContent !== phase) byId("phase").textContent = phase;
     const messages = estimatedJobMessages(job);
     byId("latest").textContent = job.error ?? messages.at(-1) ?? "";
@@ -151,7 +173,34 @@ function displayJob(job) {
         }));
     }
     byId("log").hidden = messages.length < 2;
+    byId("job-controls").hidden = !running || !job.controllable;
+    byId("pause-job").textContent = job.paused || job.pauseRequested ? "Reprendre" : "Pause";
+    byId("pause-job").disabled = jobControlPending || Boolean(job.cancelRequested);
+    byId("cancel-job").disabled = jobControlPending || Boolean(job.cancelRequested);
+    byId("job-control-hint").textContent = job.cancelRequested ? "Arrêt et récupération des clips finalisés…"
+        : job.paused ? "Clique sur Reprendre pour continuer."
+        : job.pauseRequested ? "La pause prendra effet à la fin de la démo en cours."
+        : "La pause prend effet entre deux démos.";
     refreshControls();
+}
+
+for (const id of ["pause-job", "cancel-job"]) {
+    byId(id).addEventListener("click", async () => {
+        const job = displayedJob;
+        if (!job?.controllable || job.state !== "running" || jobControlPending) return;
+        const action = id === "cancel-job" ? "cancel" : job.paused || job.pauseRequested ? "resume" : "pause";
+        jobControlPending = true;
+        displayJob(job);
+        try {
+            const result = await request("/api/job-control", { jobId: job.id, action });
+            displayJob(result.job);
+        } catch (error) {
+            setNotification(error.message);
+        } finally {
+            jobControlPending = false;
+            displayJob(displayedJob);
+        }
+    });
 }
 
 function route() {
@@ -340,9 +389,9 @@ async function poll() {
         selectSource(selection);
         displayJob(job);
         if (job.state === "running" && !job.portrait) awaitingJob = job.id;
-        if ((job.state === "complete" || job.state === "error") && awaitingJob === job.id) {
+        if (["complete", "error", "cancelled"].includes(job.state) && awaitingJob === job.id) {
             awaitingJob = null;
-            if (job.url && !job.failedFiles) {
+            if (job.state === "complete" && job.url && !job.failedFiles) {
                 if (libraryAvailable) openLibrary(job.url.split("/")[2]);
                 else openGallery(job.url);
             }

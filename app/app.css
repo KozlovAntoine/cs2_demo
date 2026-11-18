@@ -58,6 +58,10 @@ details .field { margin: 10px 0; }
 @media (prefers-reduced-motion: reduce) { #spinner { animation: none; } }
 .status p, .status li { color: var(--muted); overflow-wrap: anywhere; font-size: .84rem; }
 .status p { margin: 6px 0; }
+.job-controls { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+.job-controls > p { flex-basis: 100%; margin: 0; }
+.cancel-job { color: #ffc7bd; background: #302126; border: 1px solid #86544e; border-radius: 6px; padding: 7px 12px; }
+.cancel-job:hover:enabled { background: #543036; }
 .status ul { padding-left: 17px; max-height: 185px; overflow-y: auto; }
 .error { color: var(--red); overflow-wrap: anywhere; margin-top: 8px; font-size: .9rem; }
 .history-heading { display: flex; align-items: center; gap: 10px; justify-content: space-between; margin-bottom: 12px; }

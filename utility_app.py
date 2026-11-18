@@ -19,6 +19,8 @@ from uuid import uuid4
 from callout_zones import change_zone, read_zones
 from demo_imports import read_demo_imports
 from grenade_data import UTILITY_KINDS
+from job_control import JobCancelled, JobControl, job_checkpoint
+from job_log import bind_job_log, create_job_log, current_job_log
 from clip_library import (
     CATALOGUE_PREFIX, clip_paths, delete_clip, existing_galleries, export_url, find_library_clip, library_catalogue,
     playable_matches, read_catalogue, set_clip_state,
@@ -79,6 +81,7 @@ class App:
         self.selected_paths = ()
         self.selection = None
         self.job = {"state": "idle"}
+        self.job_control = None
 
     def busy(self):
         return self.picking or self.job["state"] == "running"
@@ -156,11 +159,18 @@ class App:
 
             def render_export(report):
                 if len(paths) == 1:
-                    gallery = generate(options, report, self.mark_demo_imported)
-                    return {"url": export_url(gallery.parent) + "/index.html"} if gallery else {}
+                    export = generate(options, report, self.mark_demo_imported)
+                    result = {"failedFiles": int(bool(export.failed_demos))}
+                    if export.gallery:
+                        result["url"] = export_url(export.gallery.parent) + "/index.html"
+                    return result
                 return self.render_batch(paths, options, report)
 
-            return self.start_job(render_export)
+            description = f"Sources · {', '.join(path.name for path in paths)}\n"
+            description += f"Utilitaire · {kind} | Limite · {limit if limit is not None else 'aucune'}"
+            if member is not None:
+                description += f"\nDémo sélectionnée dans l’archive · {member}"
+            return self.start_job(render_export, log_kind="export", description=description, controllable=True)
 
     def mark_demo_imported(self, path, member):
         with self.lock:
@@ -185,16 +195,25 @@ class App:
                     report("Export des démos" if phase == "Terminé" else phase, f"{label} · {message}")
 
                 try:
-                    gallery = generate_export(options, self.output, report_file, self.mark_demo_imported)
-                    last_gallery = gallery or last_gallery
+                    job_checkpoint()
+                    export = generate_export(options, self.output, report_file, self.mark_demo_imported)
+                    last_gallery = export.gallery or last_gallery
+                    if export.failed_demos:
+                        errors.append(f"{label} · {export.failed_demos} {'démo en erreur' if export.failed_demos == 1 else 'démos en erreur'}.")
+                except JobCancelled as error:
+                    error.gallery = error.gallery or last_gallery
+                    raise
                 except (OSError, ValueError, subprocess.SubprocessError) as error:
                     errors.append(f"{label} · {error_message(error)}")
+                    current_job_log().exception("%s · Échec du traitement", label)
                     report("Export des démos", errors[-1])
 
-        if len(errors) == len(paths):
+        if len(errors) == len(paths) and last_gallery is None:
             raise ValueError("Aucun fichier traité. " + errors[-1])
         if errors:
-            report("Terminé avec erreurs", f"{len(paths) - len(errors)} fichiers traités sur {len(paths)}. Consulte le journal pour les erreurs.")
+            successful = len(paths) - len(errors)
+            report("Terminé avec erreurs", f"{successful} {'fichier terminé' if successful <= 1 else 'fichiers terminés'} "
+                   f"sans erreur sur {len(paths)}. Consulte le journal pour les détails.")
         elif last_gallery:
             report("Terminé", f"{len(paths)} fichiers traités.")
         else:
@@ -228,7 +247,8 @@ class App:
                 generate_portrait(clip_file, map_name, clip, folder, report)
                 return {}
 
-            self.start_job(render_portrait, portrait=reference)
+            self.start_job(render_portrait, log_kind="portrait",
+                           description=f"Clip 9:16 · {clip_file.name} | Carte · {map_name}", portrait=reference)
             return {"exists": False}
 
     def open_portrait(self, reference):
@@ -245,24 +265,57 @@ class App:
                 raise ValueError("Attends la fin du rendu 9:16 avant de supprimer ce clip.")
             delete_clip(self.output, reference["exportId"], reference["file"])
 
-    def start_job(self, render, **details):
-        self.job = {"id": uuid4().hex, "state": "running", "phase": "Préparation", "messages": [], **details}
-        threading.Thread(target=self.render, args=(render,), daemon=True).start()
-        return self.job.copy()
+    def job_status(self):
+        status = self.job.copy()
+        if self.job_control and status["state"] == "running":
+            status.update(self.job_control.status())
+        return status
 
-    def render(self, render):
+    def control_job(self, data):
+        with self.lock:
+            if (data.get("jobId") != self.job.get("id") or self.job["state"] != "running"
+                    or self.job_control is None):
+                raise ValueError("Ce traitement n’est plus actif.")
+            self.job_control.request(data.get("action"))
+            return self.job_status()
+
+    def start_job(self, render, *, log_kind, description, controllable=False, **details):
+        job_id = uuid4().hex
+        logger = create_job_log(self.output, log_kind, job_id)
+        self.job_control = JobControl() if controllable else None
+        self.job = {"id": job_id, "state": "running", "phase": "Préparation", "messages": [],
+                    "controllable": controllable, **details}
+        threading.Thread(target=self.render, args=(render, logger, description), daemon=True).start()
+        return self.job_status()
+
+    def render(self, render, logger, description):
         def report(phase, message):
+            logger.info("%s · %s", phase, message)
             with self.lock:
                 self.job["phase"] = phase
                 self.job["messages"] = [*self.job["messages"][-29:], message]
 
-        try:
-            result = render(report)
-            with self.lock:
-                self.job.update(state="complete", **result)
-        except Exception as error:
-            with self.lock:
-                self.job.update(state="error", error=error_message(error))
+        with bind_job_log(logger):
+            logger.info("Début du traitement\n%s", description)
+            try:
+                if self.job_control:
+                    with self.job_control.bind():
+                        result = render(report)
+                else:
+                    result = render(report)
+            except JobCancelled as error:
+                state = "cancelled"
+                result = {"url": export_url(error.gallery.parent) + "/index.html"} if error.gallery else {}
+                report("Annulé", "Traitement annulé. Les clips finalisés sont disponibles dans les galeries.")
+            except Exception as error:
+                state = "error"
+                result = {"error": error_message(error)}
+                logger.exception("Traitement interrompu · %s", result["error"])
+            else:
+                state = "complete"
+                logger.info("Traitement terminé%s", " avec erreurs" if result.get("failedFiles") else "")
+        with self.lock:
+            self.job.update(state=state, **result)
 
 
 def error_message(error):
@@ -317,7 +370,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/status":
             with app.lock:
                 status = {"app": APP_ID, "library": True, "portrait": True, "cacheCleanup": True,
-                          "selection": app.selection, "job": app.job.copy()}
+                          "selection": app.selection, "job": app.job_status()}
             self.json_response(status)
         elif path == "/api/galleries":
             with app.lock:
@@ -391,6 +444,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.json_response(app.select())
             elif self.path == "/api/generate":
                 self.json_response({"job": app.start(data)}, HTTPStatus.ACCEPTED)
+            elif self.path == "/api/job-control":
+                self.json_response({"job": app.control_job(data)})
             elif self.path == "/api/portrait":
                 self.json_response(app.start_portrait(clip_reference(data)))
             elif self.path == "/api/open-portrait":

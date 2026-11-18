@@ -7,14 +7,18 @@ import struct
 import subprocess
 import sys
 import tempfile
+import time
 import webbrowser
 from collections import Counter
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from clip_library import CATALOGUE_PREFIX, record_throw_usage, throw_references
 from demo_imports import demo_fingerprint, read_demo_imports, record_demo_import
 from grenade_data import KINDS, read_clips
+from job_control import JobCancelled, check_job_cancelled, current_control, job_checkpoint
+from job_log import current_job_log, log_command_output
 from throw_groups import RADAR_GROUP_RADIUS, THROW_GROUP_SIZE_UNITS, group_throws
 from throw_inputs import add_throw_inputs
 
@@ -23,14 +27,36 @@ ROOT = Path(__file__).resolve().parent
 CALIBRATION = json.loads((ROOT / "radars.json").read_text(encoding="utf-8"))
 
 
-def run(command, **options):
+@dataclass(frozen=True)
+class ExportResult:
+    gallery: Path | None
+    failed_demos: int
+
+
+def run(command, *, log_stdout=True, **options):
+    logger = current_job_log()
+    if logger:
+        logger.info("Commande · %s", subprocess.list2cmdline(command))
+        if not options.get("capture_output"):
+            options.setdefault("stdout", subprocess.PIPE)
+            options.setdefault("stderr", subprocess.PIPE)
     if sys.stdout is None and os.name == "nt":
         options.setdefault("creationflags", subprocess.CREATE_NO_WINDOW)
         options.setdefault("stdin", subprocess.DEVNULL)
         if not options.get("capture_output"):
             options.setdefault("stdout", subprocess.DEVNULL)
             options.setdefault("stderr", subprocess.PIPE)
-    return subprocess.run(command, check=True, **options)
+    control = current_control()
+    try:
+        result = control.run(command, **options) if control else subprocess.run(command, check=True, **options)
+    except (JobCancelled, subprocess.SubprocessError) as error:
+        if logger:
+            log_command_output(logger, error)
+        raise
+    if logger:
+        log_command_output(logger, result, log_stdout=log_stdout)
+        logger.info("Code de sortie · %d", result.returncode)
+    return result
 
 
 def find_csdm(installation):
@@ -71,7 +97,7 @@ def seven_zip_command():
 
 def describe_archive(path):
     result = run([seven_zip_command(), "l", "-ba", "-slt", "-sccUTF-8", path], capture_output=True,
-                 encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL, timeout=20)
+                 encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL, timeout=20, log_stdout=False)
     members = {}
     for entry in re.split(r"\n(?=Path = )", result.stdout):
         fields = dict(line.split(" = ", 1) for line in entry.splitlines() if " = " in line)
@@ -87,6 +113,7 @@ def describe_archive(path):
 
 
 def load_demos(source, work, map_filter, members=()):
+    job_checkpoint()
     demos = work / "demos"
     demos.mkdir()
     if source.suffix.lower() == ".dem":
@@ -210,23 +237,56 @@ def sequence_videos(render_folder):
     return {file.name: file for file in render_folder.rglob("sequence-*.mp4")}
 
 
-def find_sequence_video(videos, number, clip):
-    name = f"sequence-{number}-tick-{clip['startTick']}-to-{clip['endTick']}.mp4"
-    video = videos.get(name)
-    if video is None or not video.stat().st_size:
-        raise ValueError(f"CS Demo Manager n’a pas livré le clip {number}.")
-    return video
+def completed_video(file):
+    bundled = Path.home() / ".csdm" / "ffmpeg" / "bin" / "ffprobe.exe"
+    probe = str(bundled) if bundled.is_file() else shutil.which("ffprobe")
+    if not probe:
+        return False
+    try:
+        result = subprocess.run([probe, "-v", "error", "-select_streams", "v:0", "-show_entries",
+                                 "stream=duration", "-of", "csv=p=0", file], capture_output=True,
+                                timeout=10, creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+        return result.returncode == 0 and bool(result.stdout.strip())
+    except (OSError, subprocess.SubprocessError):
+        return False
 
 
-def publish_videos(render_folder, clips, out, map_number):
+def publish_videos(render_folder, clips, out, map_number, *, completed_only=False):
     videos = sequence_videos(render_folder)
-    sources = [find_sequence_video(videos, number, clip) for number, clip in enumerate(clips, 1)]
+    logger = current_job_log()
+    if logger:
+        logger.info("Démo %d · MP4 détectés / clips attendus · %d/%d", map_number, len(videos), len(clips))
+    sources = []
+    for number, clip in enumerate(clips, 1):
+        name = f"sequence-{number}-tick-{clip['startTick']}-to-{clip['endTick']}.mp4"
+        source = videos.get(name)
+        if source is not None and source.is_file() and source.stat().st_size:
+            sources.append((number, clip, source))
+        elif logger:
+            logger.warning("MP4 absent ou vide · %s", name)
+    if not sources:
+        return []
+    completed_only = completed_only or len(sources) < len(clips)
     clips_dir = out / "clips"
     clips_dir.mkdir(exist_ok=True)
-    for number, (clip, source) in enumerate(zip(clips, sources), 1):
+    published = []
+    for number, clip, source in sources:
+        if completed_only and not completed_video(source):
+            if logger:
+                logger.warning("MP4 illisible · %s", source.name)
+            continue
         destination = clips_dir / f"m{map_number}-{number:04d}-{clip['kind']}.mp4"
-        shutil.move(source, destination)
+        try:
+            shutil.move(source, destination)
+        except PermissionError:
+            if completed_only:
+                if logger:
+                    logger.warning("MP4 verrouillé · %s", source.name, exc_info=True)
+                continue
+            raise
         clip["video"] = destination.relative_to(out).as_posix()
+        published.append(clip)
+    return published
 
 
 def publish_gallery(out, source, matches):
@@ -244,29 +304,27 @@ def publish_gallery(out, source, matches):
 
 
 def analyze_demo(installation, demo, kind, work):
+    job_checkpoint()
     with tempfile.TemporaryDirectory(dir=work) as temp:
         analyzer = installation / "resources" / "static" / "csda.exe"
         run([analyzer, f"-demo-path={demo}", f"-output={temp}", "-format=csdm", "-positions"])
         return read_clips(Path(temp), demo, kind)
 
 
-def record_video(installation, demo, config, before_capture, log=None):
-    capture = {"stderr": subprocess.PIPE} if log else {}
-    analysis = csdm(installation, "analyze", demo, "--json", stdout=subprocess.PIPE, encoding="utf-8", **capture)
-    if json.loads(analysis.stdout)["failed"]:
-        raise ValueError(f"L’analyse CS Demo Manager a échoué pour {demo.name}.")
+def record_video(installation, demo, config, before_capture):
+    job_checkpoint()
+    analysis = csdm(installation, "analyze", demo, "--json", stdout=subprocess.PIPE, encoding="utf-8",
+                    errors="replace", log_stdout=False)
+    try:
+        if json.loads(analysis.stdout)["failed"]:
+            raise ValueError(f"L’analyse CS Demo Manager a échoué pour {demo.name}.")
+    except (ValueError, TypeError, KeyError):
+        if logger := current_job_log():
+            logger.error("Réponse de CS Demo Manager pour %s\n%s", demo.name, analysis.stdout)
+        raise
+    job_checkpoint()
     before_capture()
-    if log is None:
-        csdm(installation, "video", "--config-file", config)
-        return
-    with log.open("w+b") as content:
-        try:
-            csdm(installation, "video", "--config-file", config, stdout=content, stderr=subprocess.STDOUT)
-        except subprocess.CalledProcessError as error:
-            content.seek(0, os.SEEK_END)
-            content.seek(max(0, content.tell() - 64 * 1024))
-            error.output = content.read()
-            raise
+    csdm(installation, "video", "--config-file", config)
 
 
 @contextmanager
@@ -294,7 +352,14 @@ def generate(args, report=None, on_import=None):
 def remove_work_directory(path, parent):
     if path.parent != parent or path.resolve() != path:
         raise ValueError("Dossier de travail invalide.")
-    shutil.rmtree(path)
+    for attempt in range(30):
+        try:
+            shutil.rmtree(path)
+            return
+        except PermissionError:
+            if attempt == 29:
+                raise
+            time.sleep(0.25)
 
 
 def release_staged_demo(demo, work):
@@ -302,7 +367,7 @@ def release_staged_demo(demo, work):
         demo.unlink(missing_ok=True)
 
 
-def export_demos(args, source, installation, out, work, update, from_app, on_import):
+def export_demos(args, source, installation, out, work, update, on_import):
     if source.suffix.lower() == ".rar":
         update("Extraction", f"Extraction des démos de {source.name}…")
     member = getattr(args, "demo_member", None)
@@ -311,6 +376,7 @@ def export_demos(args, source, installation, out, work, update, from_app, on_imp
     matches = []
     gallery = None
     duplicate_count = 0
+    failed_demos = 0
 
     def finish_demo(demo, fingerprint):
         if args.prepare:
@@ -322,6 +388,7 @@ def export_demos(args, source, installation, out, work, update, from_app, on_imp
             on_import(source, member)
 
     for map_number, demo in enumerate(demos, 1):
+        job_checkpoint()
         progress = f"{map_number}/{len(demos)}"
         update("Analyse", f"Démo {progress} · {demo.name}")
         fingerprint = demo_fingerprint(demo) if not args.prepare else None
@@ -352,7 +419,11 @@ def export_demos(args, source, installation, out, work, update, from_app, on_imp
             continue
         try:
             add_throw_inputs(demo, clips, tick_rate)
+        except JobCancelled:
+            raise
         except Exception as error:
+            if logger := current_job_log():
+                logger.warning("Commandes de lancer indisponibles pour %s", demo.name, exc_info=True)
             update("Analyse", f"Commandes de lancer indisponibles pour {demo.name} · {error}")
         counts = Counter(clip["kind"] for clip in clips)
         estimates = sum(clip["estimated"] for clip in clips)
@@ -360,14 +431,34 @@ def export_demos(args, source, installation, out, work, update, from_app, on_imp
                f"({', '.join(f'{name} {count}' for name, count in sorted(counts.items()))})"
                f", {estimates} fins estimées.")
         config, render_folder = create_video_job(demo, clips, tick_rate, work / f"map-{map_number}")
+        cancelled = False
+        missing = 0
         if not args.prepare:
-            def before_capture():
-                update("Capture", f"Démo {progress} · CS2 enregistre {len(clips)} "
-                       f"{'clip' if len(clips) == 1 else 'clips'} sur {map_name}.")
+            expected = len(clips)
+            capture_failed = False
 
-            record_video(installation, demo, config, before_capture, config.parent / "capture.log" if from_app else None)
+            def before_capture():
+                update("Capture", f"Démo {progress} · CS2 enregistre {expected} "
+                       f"{'clip' if expected == 1 else 'clips'} sur {map_name}.")
+
+            try:
+                record_video(installation, demo, config, before_capture)
+            except JobCancelled:
+                cancelled = True
+                update("Annulation", "Arrêt de CS2 et récupération des clips finalisés…")
+                # Closing this CLI disconnects its owned CSDM job, which stops the game and encoder.
+                time.sleep(2.5)
+            except (OSError, ValueError, subprocess.SubprocessError) as error:
+                capture_failed = True
+                if logger := current_job_log():
+                    logger.exception("Échec de la capture · %s", demo.name)
+                update("Export", f"Démo {progress} · Erreur de capture · {error}")
             update("Export", f"Démo {progress} · Ajout des MP4 à la galerie.")
-            publish_videos(render_folder, clips, out, map_number)
+            clips = publish_videos(render_folder, clips, out, map_number, completed_only=cancelled or capture_failed)
+            missing = expected - len(clips)
+            if not cancelled and (missing or capture_failed):
+                failed_demos += 1
+                update("Export", f"Démo {progress} · {demo.name} · {len(clips)}/{expected} clips conservés.")
             for clip in clips:
                 record_throw_usage(out, Path(clip["video"]).name, checksum, usage_counts[id(clip)])
         else:
@@ -375,13 +466,20 @@ def export_demos(args, source, installation, out, work, update, from_app, on_imp
         for clip in clips:
             del clip["flight"], clip["yaw"], clip["steamId"]
             clip["duration"] = round((clip["endTick"] - clip["startTick"]) / tick_rate, 1)
-        matches.append({"map": map_name, "demo": demo.name, "radar": publish_radar(radar, out),
-                        "clips": clips})
-        gallery = publish_gallery(out, source, matches)
+        if clips:
+            matches.append({"map": map_name, "demo": demo.name, "radar": publish_radar(radar, out),
+                            "clips": clips})
+            gallery = publish_gallery(out, source, matches)
         if not args.prepare:
             remove_work_directory(config.parent, work)
-        finish_demo(demo, fingerprint)
-    return gallery, duplicate_count
+        if cancelled:
+            raise JobCancelled()
+        if missing:
+            release_staged_demo(demo, work)
+        else:
+            finish_demo(demo, fingerprint)
+        check_job_cancelled()
+    return gallery, duplicate_count, failed_demos
 
 
 def generate_export(args, output, report, on_import=None):
@@ -400,21 +498,31 @@ def generate_export(args, output, report, on_import=None):
     gallery = None
     try:
         update("Préparation", f"Dossier de la galerie : {out}")
-        gallery, duplicate_count = export_demos(args, source, installation, out, work, update, report is not None, on_import)
+        gallery, duplicate_count, failed_demos = export_demos(args, source, installation, out, work, update, on_import)
+    except JobCancelled as error:
+        if (out / "index.html").is_file():
+            error.gallery = out / "index.html"
+        raise
     finally:
         if not args.prepare or gallery is None:
             remove_work_directory(work, out)
             if not any(out.iterdir()):
                 out.rmdir()
-    if gallery is None:
+    if gallery is None and not failed_demos:
         if duplicate_count:
             update("Terminé", "Aucun nouveau clip à générer. Tous les lancers correspondants sont déjà connus.")
-            return None
+            return ExportResult(None, 0)
         raise ValueError("Aucun lancer correspondant au filtre dans les démos sélectionnées.")
-    update("Terminé", f"Galerie : {gallery}")
-    if not args.no_open:
+    if failed_demos:
+        message = f"{failed_demos} {'démo en erreur' if failed_demos == 1 else 'démos en erreur'}."
+        if gallery:
+            message += f" Clips disponibles dans la galerie · {gallery}"
+        update("Terminé avec erreurs", message)
+    else:
+        update("Terminé", f"Galerie : {gallery}")
+    if gallery and not args.no_open:
         webbrowser.open(gallery.as_uri())
-    return gallery
+    return ExportResult(gallery, failed_demos)
 
 
 def main():
@@ -431,11 +539,11 @@ def main():
     if args.limit is not None and args.limit < 1:
         parser.error("--limit doit être au moins égal à 1.")
     try:
-        generate(args)
-    except (OSError, ValueError, subprocess.CalledProcessError) as error:
+        result = generate(args)
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
         print(f"Échec : {error}", file=sys.stderr)
         return 1
-    return 0
+    return int(bool(result.failed_demos))
 
 
 if __name__ == "__main__":

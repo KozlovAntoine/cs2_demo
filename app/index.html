@@ -55,6 +55,11 @@
       <section class="status" id="status" hidden aria-labelledby="phase">
         <div class="status-heading"><span id="spinner" aria-hidden="true"></span><h2 id="phase" aria-live="polite"></h2></div>
         <p id="latest"></p>
+        <div id="job-controls" class="job-controls" hidden>
+          <button id="pause-job" class="secondary" type="button">Pause</button>
+          <button id="cancel-job" class="cancel-job" type="button">Annuler le traitement</button>
+          <p id="job-control-hint"></p>
+        </div>
         <details id="log" hidden><summary>Journal</summary><ul id="messages"></ul></details>
       </section>
       <p id="notification" class="error" role="alert" hidden></p>
