@@ -1,5 +1,5 @@
 import math
-from collections import Counter, defaultdict
+from collections import defaultdict
 
 
 RADAR_GROUP_RADIUS = 4  # Percent of the radar width.
@@ -16,23 +16,24 @@ def positions_close(first, second):
     ))
 
 
-def group_throws(clips, previous, radar, *, removed=()):
+def group_throws(clips, previous, *, removed=()):
     representatives = defaultdict(list)
     for clip in (*previous, *removed):
         representatives[clip["kind"]].append(clip)
 
     kept = []
-    counts = Counter()
+    occurrences = defaultdict(list)
     for clip in clips:
         candidates = representatives[clip["kind"]]
         # Both 3D endpoints must match the same throw, including removed videos.
-        matches = [id(candidate) for candidate in candidates
+        matches = [candidate for candidate in candidates
                    if positions_close(clip["launch"], candidate["launch"])
                    and positions_close(clip["impact"], candidate["impact"])]
         if matches:
-            counts.update(matches)
+            for candidate in matches:
+                occurrences[id(candidate)].append(clip)
             continue
         candidates.append(clip)
         kept.append(clip)
-        counts[id(clip)] += 1
-    return kept, counts
+        occurrences[id(clip)].append(clip)
+    return kept, occurrences

@@ -92,10 +92,15 @@ def throw_usage_path(folder, filename):
 
 def load_throw_usage(path):
     with open(path, encoding="utf-8") as source:
-        counts = json.load(source)
-    if isinstance(counts, dict):
-        return {demo: count for demo, count in counts.items() if type(count) is int and count > 0}
-    return {}
+        usage = json.load(source)
+    if not isinstance(usage, dict):
+        return {}
+    return {demo: entry for demo, entry in usage.items()
+            if type(count := throw_count(entry)) is int and count > 0}
+
+
+def throw_count(entry):
+    return entry.get("count") if isinstance(entry, dict) else entry
 
 
 def read_throw_usage(path):
@@ -107,10 +112,20 @@ def read_throw_usage(path):
     return {}
 
 
+def throw_usage_summary(usage):
+    throwers = set()
+    for entry in usage.values():
+        if isinstance(entry, dict) and isinstance(entry.get("throwers"), list):
+            throwers.update(tuple(row) for row in entry["throwers"] if isinstance(row, list)
+                            and len(row) == 3 and all(isinstance(value, str) for value in row))
+    return {"usage": {"total": sum(map(throw_count, usage.values())), "demos": len(usage)},
+            "throwers": [{"steamId": steam_id, "player": player, "team": team}
+                         for steam_id, player, team in sorted(throwers)]}
+
+
 @lru_cache(maxsize=16384)
 def cached_throw_usage_summary(path, _version):
-    counts = load_throw_usage(path)
-    return sum(counts.values()), len(counts)
+    return throw_usage_summary(load_throw_usage(path))
 
 
 def throw_usage_summaries(folder):
@@ -124,54 +139,55 @@ def throw_usage_summaries(folder):
                 info = entry.stat(follow_symlinks=False)
                 reparse = getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
                 if stat.S_ISLNK(info.st_mode) or reparse:
-                    counts = read_throw_usage(Path(entry.path))
-                    total, demos = sum(counts.values()), len(counts)
+                    summary = throw_usage_summary(read_throw_usage(Path(entry.path)))
                 elif stat.S_ISREG(info.st_mode):
                     # Exporters replace usage files atomically. Reuse counts only for the same file version.
                     version = (info.st_mtime_ns, info.st_ctime_ns, info.st_size)
-                    total, demos = cached_throw_usage_summary(entry.path, version)
+                    summary = cached_throw_usage_summary(entry.path, version)
                 else:
                     continue
             except (OSError, ValueError):
                 continue
-            if demos:
+            if summary["usage"]["demos"]:
                 filename = name.removeprefix(THROW_USAGE_PREFIX).removesuffix(".json")
-                summaries[filename] = {"total": total, "demos": demos}
+                summaries[filename] = summary
     return summaries
 
 
-def record_throw_usage(folder, filename, demo, count):
+def record_throw_usage(folder, filename, demo, occurrences):
     clip_file = folder / "clips" / filename
     if not clip_file.is_file():
-        return
+        return False
     path = throw_usage_path(folder, filename)
-    counts = read_throw_usage(path)
-    if counts.get(demo) == count:
-        return
-    counts[demo] = count
+    usage = read_throw_usage(path)
+    throwers = {(clip["steamId"], clip["player"], clip["team"]) for clip in occurrences}
+    entry = {"count": len(occurrences), "throwers": [list(thrower) for thrower in sorted(throwers)]}
+    if usage.get(demo) == entry:
+        return True
+    usage[demo] = entry
     temporary = folder / f".throw-usage-{uuid4().hex}.tmp"
     try:
-        temporary.write_text(json.dumps(counts, ensure_ascii=True) + "\n", encoding="utf-8")
+        temporary.write_text(json.dumps(usage, ensure_ascii=True) + "\n", encoding="utf-8")
         temporary.replace(path)
         if not clip_file.is_file():
             path.unlink(missing_ok=True)
+            return False
     finally:
         temporary.unlink(missing_ok=True)
+    return True
 
 
 def throw_references(output, map_name):
-    radar = None
     clips = []
     removed = []
     for folder, _, data in sorted(published_catalogues(output, completed_only=True), key=lambda item: item[1], reverse=True):
         for match in data["matches"]:
             if match["map"] != map_name:
                 continue
-            radar = radar or match.get("radar")
             # Use one catalogue snapshot so a concurrent deletion cannot hide a throw.
             clips.extend({**clip, "exportId": folder.name} for clip in published_clips(match))
             removed.extend(clip for clip in match.get("removedThrows", ()) if clip.get("kind") in UTILITY_KINDS)
-    return radar, clips, removed
+    return clips, removed
 
 
 def library_catalogue(output):
@@ -189,9 +205,8 @@ def library_catalogue(output):
                 video = clip["video"]
                 filename = video.removeprefix("clips/")
                 state = states.get(filename, {})
-                summary = summaries.get(os.path.normcase(filename))
-                usage = {"usage": summary} if summary else {}
-                clips.append({**clip, **usage, "video": f"{base}/{video}", "file": filename,
+                summary = summaries.get(os.path.normcase(filename), {})
+                clips.append({**clip, **summary, "video": f"{base}/{video}", "file": filename,
                               "exportId": folder.name, "source": match["demo"],
                               "calloutOverride": state.get("calloutOverride"),
                               **{flag: state.get(flag) is True for flag in CLIP_FLAGS}})

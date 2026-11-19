@@ -101,7 +101,7 @@ def read_clips(folder, demo: Path, kind):
             flight = [trajectory[0]]
         flight.append((activation_tick, *(end_event[1] if nade == "molo" and end_event else impact)))
         clips.append({
-            "kind": nade, "player": player, "steamId": steam_id, "round": int(round_number),
+            "kind": nade, "player": player, "steamId": steam_id, "team": row[7].strip(), "round": int(round_number),
             "launch": launch, "impact": impact, "launchTick": launch_tick,
             "activationTick": activation_tick, "startTick": start_tick, "endTick": end_tick,
             "estimated": estimated, "flight": flight, "yaw": float(row[11]),

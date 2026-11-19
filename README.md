@@ -57,6 +57,14 @@ Sur le radar, les repères se regroupent en foyers à 100 %. En zoomant, chaque 
 
 La vidéothèque compte toutes les occurrences de chaque lancer dans les démos traitées, y compris les doublons ignorés. La moyenne porte sur les parties où le lancer a été observé. Réimporter une démo met à jour son compteur. Le menu **Fréquence** filtre les badges **Rare** (moins de 2), **Commun** (de 2 à 10) et **Très fréquent** (plus de 10). Les seuils `RARE_BELOW` et `COMMON_MAX` dans `gallery/gallery.js` s’appliquent dès l’actualisation de la page. Les clips existants obtiennent une fréquence dès qu’une nouvelle analyse retrouve leur lancer.
 
+Les menus **Équipe** et **Joueur** proposent chacun une recherche. Tu peux choisir une équipe et plusieurs joueurs. Pour qu’un clip apparaisse, il suffit qu’un des joueurs sélectionnés ait effectué ce lancer avec l’équipe choisie. Un doublon peut donc faire apparaître le clip déjà disponible. L’équipe correspond à celle enregistrée dans la démo au moment du lancer. L’identifiant Steam relie les pseudonymes successifs d’un même joueur.
+
+Pour compléter les anciens clips, relis les démos ou archives d’origine avec `--index-only`. La commande met à jour la vidéothèque sans lancer CS2. Avant cette passe, les anciens clips restent filtrables par le pseudonyme du lanceur enregistré dans le clip.
+
+```powershell
+python utility_video.py --index-only "match-1.rar" "match-2.dem"
+```
+
 Les copies de travail des démos et les fichiers de capture intermédiaires sont nettoyés automatiquement après chaque capture et en cas d’échec. Si l’application ou le PC s’arrête avant le nettoyage, le prochain export supprime les fichiers temporaires signalés par l’export interrompu. Les `.dem` ou `.rar` d’origine servent aux prochains exports. Les clips restent lisibles depuis leurs MP4.
 
 Dans la vidéothèque, sélectionne un lancer et clique sur **Générer vidéo 9:16**. FFmpeg recadre le centre du MP4 existant en 720 × 1280 en conservant les proportions et le son. Après le rendu, **Ouvrir le dossier** donne accès au MP4. Le nom contient le joueur, la carte, le type d’utilitaire et la date du rendu au format `AAAA-MM-JJ HH-MM`.

@@ -201,6 +201,30 @@ h1 { font-size: clamp(24px, 2.4vw, 30px); line-height: 1.2; letter-spacing: 0; f
 .toolbar { border: 0; gap: 8px; margin: 0; padding: 0; }
 .toolbar-filters { gap: 7px; }
 .toolbar button, .toolbar select, .map-controls select { font-size: .8rem; }
+.throw-filter { position: relative; font-size: .8rem; }
+.throw-filter summary {
+  display: flex; gap: 6px; align-items: center; min-height: 36px; padding: 6px 10px;
+  list-style: none; border: 1px solid var(--edge); border-radius: 7px; background: #202831; cursor: pointer;
+}
+.throw-filter summary::-webkit-details-marker { display: none; }
+.throw-filter summary::after { content: ""; width: 6px; height: 6px; margin-left: 2px; border: solid currentColor; border-width: 0 1px 1px 0; transform: translateY(-2px) rotate(45deg); }
+.throw-filter[open] summary, .throw-filter summary:hover, .throw-filter summary:has(.throw-filter-value:not(:empty)) { border-color: var(--accent); }
+.throw-filter-value { max-width: 120px; overflow: hidden; color: var(--accent); text-overflow: ellipsis; white-space: nowrap; }
+.throw-filter-value:empty { display: none; }
+.throw-filter-menu {
+  position: absolute; z-index: 10; top: calc(100% + 5px); left: 0; width: min(250px, calc(100vw - 32px));
+  display: grid; gap: 5px; padding: 7px; background: var(--panel); border: 1px solid var(--edge);
+  border-radius: 8px; box-shadow: 0 8px 22px #0008;
+}
+.throw-filter-menu input[type="search"] { width: 100%; min-height: 33px; padding: 5px 8px; border: 1px solid var(--edge); border-radius: 5px; color: inherit; background: #10161c; font: inherit; }
+.throw-filter :is(summary, input):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.throw-filter-clear { justify-self: start; padding: 4px 7px; border: 0; border-radius: 4px; background: transparent; color: var(--muted); }
+.throw-filter-clear:hover { background: #202831; color: inherit; }
+.throw-filter-options { max-height: min(240px, 44vh); overflow-y: auto; overscroll-behavior: contain; }
+.throw-filter-options label { display: flex; min-height: 32px; padding: 4px 7px; border-radius: 4px; color: inherit; font-size: inherit; overflow-wrap: anywhere; cursor: pointer; }
+.throw-filter-options label:hover { background: #202831; }
+.throw-filter-options input { flex: none; margin: 0; accent-color: var(--accent); }
+.throw-filter-options p { padding: 6px 7px; color: var(--muted); }
 #clip-search { flex: 1 1 165px; min-width: 0; min-height: 36px; padding: 6px 10px; border: 1px solid var(--edge); border-radius: 7px; background: var(--panel); color: inherit; font: inherit; font-size: .8rem; }
 #clip-search:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 #types button, .toolbar-filters > button, .zone-button, select { background: #202831; border-radius: 7px; }

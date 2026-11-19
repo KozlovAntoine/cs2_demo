@@ -74,6 +74,11 @@ const copyStatus = byId("copy-status");
 let currentMatch;
 let filter = "all";
 let statusFilter = "";
+let selectedTeam = "";
+let selectedPlayers = new Set();
+const teamOptions = new Map();
+const playerOptions = new Map();
+const clipThrowers = new WeakMap();
 let heatmapEnabled = false;
 const favoritePending = new Set();
 let filtered = [];
@@ -223,6 +228,8 @@ function syncAddress(replace = false) {
     if (roundSelect.value) params.set("round", roundSelect.value);
     if (statusFilter) params.set("status", statusFilter);
     if (frequencySelect?.value) params.set("frequency", frequencySelect.value);
+    if (selectedTeam) params.set("team", selectedTeam);
+    for (const player of selectedPlayers) params.append("player", player);
     if (pointSelect.value !== "impact") params.set("points", pointSelect.value);
     if (levelSelect.value === "lower") params.set("floor", "lower");
     if (heatmapEnabled) params.set("heatmap", "1");
@@ -372,7 +379,8 @@ function renderClipTitle(clip) {
 
 function selectClip(clip, autoplay = false) {
     const changed = selected !== clip;
-    const scope = JSON.stringify([currentMatch?.map, filter, statusFilter, roundSelect.value, frequencySelect?.value]);
+    const scope = JSON.stringify([currentMatch?.map, filter, statusFilter, roundSelect.value,
+        frequencySelect?.value, selectedTeam, [...selectedPlayers]]);
     if (scope !== playbackScope) {
         playbackScope = scope;
         playbackHistory = [];
@@ -478,7 +486,7 @@ function handleLibraryShortcut(event) {
     const key = event.key.toLowerCase();
     if (key !== "f" && key !== "n" && key !== "b") return;
     const target = event.target;
-    if (target?.isContentEditable || target?.closest?.("input, textarea, select") || document.querySelector("dialog[open]")) return;
+    if (target?.isContentEditable || target?.closest?.("input, textarea, select, .throw-filter") || document.querySelector("dialog[open]")) return;
 
     if (key === "f") {
         if (favoriteButton.hidden || favoriteButton.disabled) return;
@@ -834,6 +842,7 @@ function renderClips(deletion, playingClip, preferred = selected) {
         && (!frequency || throwFrequency(clip)?.category === frequency)
         && (statusFilter !== "favorites" || clip.favorite)
         && (statusFilter !== "unwatched" || !clip.watched)
+        && matchesThrowFilters(clip)
         && (!query || calloutName(clip, currentMatch).toLocaleLowerCase("fr").includes(query)));
     renderRadar();
     const rows = radarSelection ?? filtered;
@@ -991,6 +1000,177 @@ clipCalloutForm.addEventListener("submit", (event) => {
 byId("reset-clip-callout").addEventListener("click", () => saveClipCallout(null));
 byId("cancel-clip-callout").addEventListener("click", () => clipCalloutDialog.close());
 
+function throwFilterKey(value) {
+    return value.normalize("NFKC").trim().replace(/\s+/g, " ").toLocaleLowerCase("fr");
+}
+
+function throwFilterSearch(value) {
+    return throwFilterKey(value).normalize("NFD").replace(/\p{M}/gu, "");
+}
+
+function indexThrowFilters() {
+    teamOptions.clear();
+    playerOptions.clear();
+    const knownNames = new Set();
+    for (const match of catalogue.matches) {
+        for (const clip of match.clips) {
+            const throwers = [...(clip.throwers ?? [])];
+            if (clip.player && !throwers.some(({ player }) => player === clip.player)) {
+                throwers.push({ player: clip.player, team: clip.team });
+            }
+            clipThrowers.set(clip, throwers.map(({ player, team, steamId }) => {
+                const teamId = throwFilterKey(team ?? "");
+                const name = throwFilterKey(player);
+                const playerId = steamId || `name:${name}`;
+                if (steamId) knownNames.add(name);
+                if (teamId && !teamOptions.has(teamId)) teamOptions.set(teamId, { id: teamId, label: team });
+                if (!playerOptions.has(playerId)) {
+                    playerOptions.set(playerId, { id: playerId, label: player, aliases: new Set(), teams: new Set() });
+                }
+                const option = playerOptions.get(playerId);
+                option.aliases.add(player);
+                if (teamId) option.teams.add(teamId);
+                return { teamId, playerId };
+            }));
+        }
+    }
+    for (const name of knownNames) {
+        const legacy = playerOptions.get(`name:${name}`);
+        if (legacy) legacy.label = `${legacy.label} (pseudo seul)`;
+    }
+}
+
+function matchesThrowFilters(clip) {
+    if (!selectedTeam && !selectedPlayers.size) return true;
+    return clipThrowers.get(clip)?.some(({ teamId, playerId }) => (!selectedTeam || selectedTeam === teamId)
+        && (!selectedPlayers.size || selectedPlayers.has(playerId)));
+}
+
+function createThrowFilter(id, multiple, onChange) {
+    const control = byId(id);
+    const summary = control.querySelector("summary");
+    const value = control.querySelector(".throw-filter-value");
+    const menu = control.querySelector(".throw-filter-menu");
+    const search = menu.querySelector('input[type="search"]');
+    const clear = menu.querySelector(".throw-filter-clear");
+    const choices = menu.querySelector(".throw-filter-options");
+    let options = [];
+    let selection = new Set();
+    control.hidden = false;
+
+    function fitMenu() {
+        if (!control.open) return;
+        const overhang = control.getBoundingClientRect().left + menu.offsetWidth + 12 - document.documentElement.clientWidth;
+        menu.style.left = `${-Math.max(0, overhang)}px`;
+    }
+
+    function setSelection(ids) {
+        selection = new Set(ids);
+        const first = options.find((option) => selection.has(option.id));
+        value.textContent = selection.size > 1 ? `${selection.size} joueurs` : first?.label ?? "";
+        clear.hidden = !selection.size;
+        for (const input of choices.querySelectorAll("input")) input.checked = selection.has(input.value);
+        fitMenu();
+    }
+
+    function renderOptions() {
+        const query = throwFilterSearch(search.value);
+        const fragment = document.createDocumentFragment();
+        for (const option of options) {
+            const names = option.aliases ?? [option.label];
+            if (query && ![...names].some((name) => throwFilterSearch(name).includes(query))) continue;
+            const label = document.createElement("label");
+            const input = document.createElement("input");
+            input.type = multiple ? "checkbox" : "radio";
+            input.name = id;
+            input.value = option.id;
+            input.checked = selection.has(option.id);
+            label.append(input, option.label);
+            fragment.append(label);
+        }
+        if (!fragment.childElementCount) {
+            const empty = document.createElement("p");
+            empty.textContent = "Aucun résultat";
+            fragment.append(empty);
+        }
+        choices.replaceChildren(fragment);
+        choices.scrollTop = 0;
+    }
+
+    function close() {
+        control.open = false;
+        summary.focus({ preventScroll: true });
+    }
+
+    control.addEventListener("toggle", () => {
+        if (!control.open) return;
+        search.value = "";
+        renderOptions();
+        fitMenu();
+        search.focus({ preventScroll: true });
+    });
+    search.addEventListener("input", renderOptions);
+    choices.addEventListener("change", ({ target }) => {
+        const next = multiple ? new Set(selection) : new Set();
+        if (target.checked) next.add(target.value);
+        else next.delete(target.value);
+        if (!multiple) close();
+        onChange(next);
+    });
+    clear.addEventListener("click", () => {
+        if (multiple) search.focus({ preventScroll: true });
+        else close();
+        onChange(new Set());
+    });
+    control.addEventListener("keydown", (event) => {
+        if (event.key !== "Escape" || !control.open) return;
+        event.preventDefault();
+        close();
+    });
+    control.addEventListener("focusout", ({ relatedTarget }) => {
+        if (relatedTarget && !control.contains(relatedTarget)) control.open = false;
+    });
+    document.addEventListener("click", ({ target }) => {
+        if (control.open && !control.contains(target)) control.open = false;
+    });
+    window.addEventListener("resize", fitMenu);
+
+    return {
+        setSelection,
+        setOptions(available, ids) {
+            options = [...available].sort((a, b) => a.label.localeCompare(b.label, "fr"));
+            setSelection(ids);
+            if (control.open) renderOptions();
+        },
+    };
+}
+
+function renderThrowFilters() {
+    if (!teamOptions.has(selectedTeam)) selectedTeam = "";
+    const players = [...playerOptions.values()].filter((player) => !selectedTeam || player.teams.has(selectedTeam));
+    const allowed = new Set(players.map((player) => player.id));
+    selectedPlayers = new Set([...selectedPlayers].filter((id) => allowed.has(id)));
+    teamMenu.setOptions(teamOptions.values(), selectedTeam ? [selectedTeam] : []);
+    playerMenu.setOptions(players, selectedPlayers);
+}
+
+function applyThrowFilters() {
+    radarSelection = undefined;
+    renderClips();
+    syncAddress();
+}
+
+const teamMenu = library && createThrowFilter("team-filter", false, (ids) => {
+    selectedTeam = ids.values().next().value ?? "";
+    renderThrowFilters();
+    applyThrowFilters();
+});
+const playerMenu = library && createThrowFilter("player-filter", true, (ids) => {
+    selectedPlayers = ids;
+    playerMenu.setSelection(ids);
+    applyThrowFilters();
+});
+
 function renderFilters(keepCurrent = false) {
     const bar = byId("types");
     bar.replaceChildren();
@@ -1048,7 +1228,7 @@ function switchMatch({ round = "", level = "upper", groupId, selectedId, fromAdd
     if (group) radarSelection = [group];
     const clip = selectedId && currentMatch.clips.find((item) => clipId(item) === selectedId);
     // A clip just marked as seen can still be open in the player under À traiter.
-    if (clip && statusFilter === "unwatched" && clip.watched) renderClips(undefined, clip);
+    if (clip && statusFilter === "unwatched" && clip.watched && matchesThrowFilters(clip)) renderClips(undefined, clip);
     else renderClips(undefined, undefined, fromAddress ? clip || null : selected);
     revealSelectedRow();
 }
@@ -1093,6 +1273,9 @@ function restoreLibraryAddress() {
     statusFilter = clipStateEnabled && ["favorites", "unwatched"].includes(status) ? status : "";
     const frequency = params.get("frequency");
     if (frequencySelect) frequencySelect.value = Object.hasOwn(frequencyLabels, frequency) ? frequency : "";
+    selectedTeam = params.get("team") ?? "";
+    selectedPlayers = new Set(params.getAll("player"));
+    renderThrowFilters();
     showStatusFilter();
     heatmapEnabled = params.get("heatmap") === "1";
     pointSelect.value = params.get("points") === "launch" ? "launch" : "impact";
@@ -1145,6 +1328,7 @@ if (library) {
     document.body.classList.add("library-view");
     document.querySelector("h1").textContent = "Votre prochain lancer décisif.";
     byId("match-label").textContent = "Carte";
+    indexThrowFilters();
     if (navigation) window.restoreLibraryAddress = restoreLibraryAddress;
     else window.addEventListener("popstate", restoreLibraryAddress);
     restoreLibraryAddress();
@@ -1260,6 +1444,8 @@ deleteDialog.addEventListener("close", async () => {
         playbackIndex -= playbackHistory.slice(0, playbackIndex + 1).filter((item) => item === clip).length;
         playbackHistory = playbackHistory.filter((item) => item !== clip);
         map.clips = map.clips.filter((item) => item !== clip);
+        indexThrowFilters();
+        renderThrowFilters();
         if (!map.clips.length) {
             catalogue.matches.splice(catalogue.matches.indexOf(map), 1);
             updateMapOptions(currentMatch?.map);

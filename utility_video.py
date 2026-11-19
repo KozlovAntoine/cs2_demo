@@ -315,6 +315,40 @@ def analyze_demo(installation, demo, kind, work):
         return read_clips(Path(temp), demo, kind)
 
 
+def record_known_throw_usage(output, previous, occurrences, checksum, *, current_export=None):
+    indexed = 0
+    for clip in previous:
+        if throws := occurrences.get(id(clip)):
+            folder = output / clip["exportId"] if "exportId" in clip else current_export
+            if record_throw_usage(folder, Path(clip["video"]).name, checksum, throws):
+                indexed += 1
+    return indexed
+
+
+def index_throw_metadata(args):
+    output = args.output.resolve(strict=True)
+    installation = find_csdm(args.csdm)
+    failed = False
+    with reserve_export(output):
+        for source in args.demo:
+            try:
+                source = source.resolve(strict=True)
+                with tempfile.TemporaryDirectory(prefix=".throw-index-", dir=output) as temp:
+                    work = Path(temp)
+                    print(f"Indexation · {source.name}", flush=True)
+                    for demo in load_demos(source, work, args.map):
+                        map_name, _, clips, checksum = analyze_demo(installation, demo, args.type, work)
+                        previous, removed = throw_references(output, map_name)
+                        _, occurrences = group_throws(clips, previous, removed=removed)
+                        indexed = record_known_throw_usage(output, previous, occurrences, checksum)
+                        print(f"{demo.name} · {indexed} clips associés à cette démo.", flush=True)
+                        release_staged_demo(demo, work)
+            except (OSError, ValueError, subprocess.SubprocessError) as error:
+                failed = True
+                print(f"Échec de l’indexation de {source.name} · {error}", file=sys.stderr)
+    return int(failed)
+
+
 def record_video(installation, demo, config, before_capture):
     job_checkpoint()
     analysis = csdm(installation, "analyze", demo, "--json", stdout=subprocess.PIPE, encoding="utf-8",
@@ -431,25 +465,21 @@ def export_demos(args, source, installation, out, work, update, on_import, on_pr
             finish_demo(demo, fingerprint, demo_member)
             queue("skipped", map=map_name, note="Aucun lancer correspondant.")
             continue
-        radar = radar_layout(map_name, installation)
-        saved_radar, previous, removed = throw_references(out.parent, map_name)
+        previous, removed = throw_references(out.parent, map_name)
         previous.extend(clip for match in matches if match["map"] == map_name for clip in match["clips"])
-        unique, usage_counts = group_throws(clips, previous, saved_radar or radar, removed=removed)
+        unique, occurrences = group_throws(clips, previous, removed=removed)
         skipped = len(clips) - len(unique)
         duplicate_count += skipped
         if skipped:
             update("Analyse", f"{map_name} · {skipped} {'doublon ignoré' if skipped == 1 else 'doublons ignorés'}.")
         if not args.prepare:
-            for clip in previous:
-                count = usage_counts[id(clip)]
-                if count:
-                    folder = out.parent / clip["exportId"] if "exportId" in clip else out
-                    record_throw_usage(folder, Path(clip["video"]).name, checksum, count)
+            record_known_throw_usage(out.parent, previous, occurrences, checksum, current_export=out)
         clips = unique[:args.limit]
         if not clips:
             finish_demo(demo, fingerprint, demo_member)
             queue("skipped", map=map_name, duplicates=skipped)
             continue
+        radar = radar_layout(map_name, installation)
         queue("analysis", map=map_name, total=len(clips), duplicates=skipped)
         try:
             add_throw_inputs(demo, clips, tick_rate)
@@ -497,7 +527,7 @@ def export_demos(args, source, installation, out, work, update, on_import, on_pr
                 failed_demos += 1
                 update("Export", f"Démo {progress} · {demo.name} · {len(clips)}/{expected} clips conservés.")
             for clip in clips:
-                record_throw_usage(out, Path(clip["video"]).name, checksum, usage_counts[id(clip)])
+                record_throw_usage(out, Path(clip["video"]).name, checksum, occurrences[id(clip)])
         else:
             update("Préparation", f"Configuration : {config}")
         for clip in clips:
@@ -578,18 +608,25 @@ def generate_export(args, output, report, on_import=None, on_progress=None):
 
 def main():
     parser = argparse.ArgumentParser(description="Génère des clips de grenades CS2 et leur galerie locale.")
-    parser.add_argument("demo", type=Path, help="Démo GOTV .dem ou archive HLTV .rar")
+    parser.add_argument("demo", type=Path, nargs="+", help="Démo GOTV .dem ou archive HLTV .rar")
     parser.add_argument("--type", choices=["all", *dict.fromkeys(KINDS.values())], default="all")
     parser.add_argument("--map", help="Partie du nom de fichier .dem à sélectionner dans l’archive")
     parser.add_argument("--output", type=Path, default=ROOT / "exports", help="Dossier parent des galeries")
     parser.add_argument("--csdm", type=Path, help="Dossier d’installation de CS Demo Manager")
-    parser.add_argument("--prepare", action="store_true", help="Prépare les séquences et le radar sans lancer CS2")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--prepare", action="store_true", help="Prépare les séquences et le radar sans lancer CS2")
+    mode.add_argument("--index-only", action="store_true", help="Indexe les joueurs et équipes des clips existants sans capture")
     parser.add_argument("--limit", type=int, help="Limite de lancers par carte pour un essai")
     parser.add_argument("--no-open", action="store_true", help="N’ouvre pas le navigateur après export")
     args = parser.parse_args()
     if args.limit is not None and args.limit < 1:
         parser.error("--limit doit être au moins égal à 1.")
     try:
+        if args.index_only:
+            return index_throw_metadata(args)
+        if len(args.demo) != 1:
+            parser.error("Indique une seule source pour une capture, ou utilise --index-only.")
+        args.demo = args.demo[0]
         result = generate(args)
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         print(f"Échec : {error}", file=sys.stderr)

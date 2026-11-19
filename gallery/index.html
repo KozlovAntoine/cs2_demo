@@ -34,6 +34,22 @@
             <button id="unwatched" type="button" aria-pressed="false" hidden>À traiter</button>
             <label id="frequency-control" for="frequency" hidden>Fréquence <select id="frequency"><option value="">Toutes</option></select></label>
             <label for="round">Round <select id="round"></select></label>
+            <details id="team-filter" class="throw-filter" hidden>
+              <summary>Équipe <span class="throw-filter-value"></span></summary>
+              <div class="throw-filter-menu">
+                <input type="search" placeholder="Rechercher une équipe…" aria-label="Rechercher une équipe" autocomplete="off">
+                <button class="throw-filter-clear" type="button">Effacer la sélection</button>
+                <div class="throw-filter-options" role="group" aria-label="Équipes"></div>
+              </div>
+            </details>
+            <details id="player-filter" class="throw-filter" hidden>
+              <summary>Joueur <span class="throw-filter-value"></span></summary>
+              <div class="throw-filter-menu">
+                <input type="search" placeholder="Rechercher un joueur…" aria-label="Rechercher un joueur" autocomplete="off">
+                <button class="throw-filter-clear" type="button">Effacer la sélection</button>
+                <div class="throw-filter-options" role="group" aria-label="Joueurs"></div>
+              </div>
+            </details>
           </div>
         </div>
         <section id="video-panel" class="panel" aria-labelledby="clip-title">
