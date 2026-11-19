@@ -16,8 +16,9 @@ CATALOGUE_PREFIX = "window.utilityCatalogue = "
 EXPORT_NAME = re.compile(r"[\w-]+")
 CLIP_NAME = re.compile(r"[\w-]+\.mp4")
 CLIP_VIDEO = re.compile(r"clips/[\w-]+\.mp4")
-CLIP_FLAGS = ("favorite", "watched")
+CLIP_FLAGS = ("favorite", "watched", "potentialDismissed")
 THROW_USAGE_PREFIX = ".throw-usage-"
+FAVORITE_SUGGESTIONS = ".potential-favorites.json"
 
 
 def export_url(folder):
@@ -190,8 +191,19 @@ def throw_references(output, map_name):
     return clips, removed
 
 
+def read_favorite_suggestions(output):
+    try:
+        scores = json.loads((output / FAVORITE_SUGGESTIONS).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(scores, dict):
+        return {}
+    return {key: value for key, value in scores.items() if type(value) in (float, int) and 0 < value <= 1}
+
+
 def library_catalogue(output):
     maps = {}
+    suggestions = read_favorite_suggestions(output)
     for folder, _, data in sorted(published_catalogues(output), key=lambda item: item[1], reverse=True):
         base = export_url(folder)
         states = read_clip_states(folder)
@@ -206,10 +218,12 @@ def library_catalogue(output):
                 filename = video.removeprefix("clips/")
                 state = states.get(filename, {})
                 summary = summaries.get(os.path.normcase(filename), {})
+                score = suggestions.get(f"{folder.name}/{filename}")
+                suggestion = {"potentialScore": score} if score and state.get("potentialDismissed") is not True else {}
                 clips.append({**clip, **summary, "video": f"{base}/{video}", "file": filename,
                               "exportId": folder.name, "source": match["demo"],
                               "calloutOverride": state.get("calloutOverride"),
-                              **{flag: state.get(flag) is True for flag in CLIP_FLAGS}})
+                              **{flag: state.get(flag) is True for flag in CLIP_FLAGS}, **suggestion})
             entry = maps.setdefault(match["map"], {"map": match["map"], "radar": None, "clips": []})
             radar = match.get("radar")
             if radar and not entry["radar"]:

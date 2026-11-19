@@ -32,6 +32,7 @@
           <div class="toolbar-filters">
             <button id="favorites" type="button" aria-pressed="false" hidden>Favoris</button>
             <button id="unwatched" type="button" aria-pressed="false" hidden>À traiter</button>
+            <button id="potential-favorites" type="button" aria-pressed="false" hidden>Potentiel favori</button>
             <label id="frequency-control" for="frequency" hidden>Fréquence <select id="frequency"><option value="">Toutes</option></select></label>
             <label for="round">Round <select id="round"></select></label>
             <details id="team-filter" class="throw-filter" hidden>
@@ -55,7 +56,10 @@
         <section id="video-panel" class="panel" aria-labelledby="clip-title">
           <div class="section-bar">
             <h2 id="clip-title">Clip</h2>
-            <button id="skip-intro" class="zone-button" type="button" aria-pressed="false">Début à 2 s</button>
+            <div class="clip-review-controls">
+              <button id="skip-intro" class="zone-button" type="button" aria-pressed="false">Début à 2 s</button>
+              <button id="dismiss-potential" class="zone-button" type="button" hidden>Pas potentiel</button>
+            </div>
             <button id="edit-clip-callout" class="zone-button" type="button" hidden>Modifier la zone</button>
             <span id="clip-meta"></span>
           </div>

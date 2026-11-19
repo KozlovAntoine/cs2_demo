@@ -25,6 +25,8 @@ const roundSelect = byId("round");
 const clipSearch = byId("clip-search");
 const favoritesFilter = byId("favorites");
 const unwatchedFilter = byId("unwatched");
+const potentialFilter = byId("potential-favorites");
+const statusFilters = new Map([["favorites", favoritesFilter], ["unwatched", unwatchedFilter], ["potential", potentialFilter]]);
 const frequencySelect = byId("frequency");
 const pointSelect = byId("point");
 const levelSelect = byId("level");
@@ -59,6 +61,7 @@ const previousPage = byId("clip-prev-page");
 const nextPage = byId("clip-next-page");
 const deleteButton = byId("delete-clip");
 const favoriteButton = byId("favorite-clip");
+const dismissPotentialButton = byId("dismiss-potential");
 const editClipCallout = byId("edit-clip-callout");
 const clipCalloutDialog = byId("clip-callout-dialog");
 const clipCalloutForm = byId("clip-callout-form");
@@ -73,14 +76,14 @@ const throwCommand = byId("throw-command");
 const copyStatus = byId("copy-status");
 let currentMatch;
 let filter = "all";
-let statusFilter = "";
+let activeStatusFilters = new Set();
 let selectedTeam = "";
 let selectedPlayers = new Set();
 const teamOptions = new Map();
 const playerOptions = new Map();
 const clipThrowers = new WeakMap();
 let heatmapEnabled = false;
-const favoritePending = new Set();
+const reviewPending = new Set();
 let filtered = [];
 let visible = [];
 let clipPage = 0;
@@ -226,7 +229,9 @@ function syncAddress(replace = false) {
     if (filter !== "all") params.set("type", filter);
     if (clipSearch?.value.trim()) params.set("q", clipSearch.value.trim());
     if (roundSelect.value) params.set("round", roundSelect.value);
-    if (statusFilter) params.set("status", statusFilter);
+    for (const status of statusFilters.keys()) {
+        if (activeStatusFilters.has(status)) params.append("status", status);
+    }
     if (frequencySelect?.value) params.set("frequency", frequencySelect.value);
     if (selectedTeam) params.set("team", selectedTeam);
     for (const player of selectedPlayers) params.append("player", player);
@@ -247,8 +252,9 @@ function syncAddress(replace = false) {
 }
 
 function showStatusFilter() {
-    favoritesFilter.setAttribute("aria-pressed", String(statusFilter === "favorites"));
-    unwatchedFilter?.setAttribute("aria-pressed", String(statusFilter === "unwatched"));
+    for (const [status, button] of statusFilters) {
+        button.setAttribute("aria-pressed", String(activeStatusFilters.has(status)));
+    }
 }
 
 function throwFrequency(clip) {
@@ -379,7 +385,7 @@ function renderClipTitle(clip) {
 
 function selectClip(clip, autoplay = false) {
     const changed = selected !== clip;
-    const scope = JSON.stringify([currentMatch?.map, filter, statusFilter, roundSelect.value,
+    const scope = JSON.stringify([currentMatch?.map, filter, [...activeStatusFilters], roundSelect.value,
         frequencySelect?.value, selectedTeam, [...selectedPlayers]]);
     if (scope !== playbackScope) {
         playbackScope = scope;
@@ -415,7 +421,7 @@ function selectClip(clip, autoplay = false) {
     deleteButton.hidden = !library || !clip?.exportId;
     clipActions.hidden = !clip?.video;
     editClipCallout.hidden = !window.utilityClipCallout || !clip?.exportId;
-    syncFavoriteButton();
+    syncReviewButtons();
     if (changed) showLineup(clip);
     if (portrait && changed) {
         portraitError = "";
@@ -460,6 +466,11 @@ function adjacentRowIndex(direction) {
     if (index !== -1 || !selected) return index + direction;
 
     // A clip marked as watched can stay in the player after leaving the filtered list.
+    if (activeStatusFilters.has("potential") && selected.potentialScore > 0) {
+        const next = visible.findIndex((clip) => comparePotential(selected, clip) < 0);
+        const insertion = next < 0 ? visible.length : next;
+        return direction > 0 ? insertion : insertion - 1;
+    }
     const clips = currentMatch.clips;
     const visibleClips = new Set(visible);
     for (let i = clips.indexOf(selected) + direction; i >= 0 && i < clips.length; i += direction) {
@@ -769,14 +780,14 @@ async function markWatched(clip, badge) {
         clip.watched = false;
         const mountedBadge = clipRowAt(visible.indexOf(clip))?.querySelector(".watched-badge");
         if (mountedBadge) mountedBadge.hidden = true;
-        if (currentMatch?.clips.includes(clip) && statusFilter === "unwatched") {
+        if (currentMatch?.clips.includes(clip) && activeStatusFilters.has("unwatched")) {
             renderClips(undefined, selected);
             syncAddress(true);
         }
         showClipStateError(error);
         return;
     }
-    if (statusFilter === "unwatched" && filtered.includes(clip)) {
+    if (activeStatusFilters.has("unwatched") && filtered.includes(clip)) {
         const index = visible.indexOf(clip);
         const wasFocused = document.activeElement === clipRowAt(index);
         const scroll = list.scrollTop;
@@ -790,8 +801,17 @@ async function markWatched(clip, badge) {
     }
 }
 
-function syncFavoriteButton() {
-    if (!favoriteButton) return;
+function isPotential(clip) {
+    return clip?.potentialScore > 0 && !clip.favorite && !clip.potentialDismissed;
+}
+
+function comparePotential(a, b) {
+    return b.potentialScore - a.potentialScore || clipId(a).localeCompare(clipId(b));
+}
+
+function syncReviewButtons() {
+    dismissPotentialButton.hidden = !clipStateEnabled || !isPotential(selected);
+    dismissPotentialButton.disabled = reviewPending.has(selected);
     favoriteButton.hidden = !clipStateEnabled || !selected?.exportId;
     if (favoriteButton.hidden) return;
     const favorite = Boolean(selected.favorite);
@@ -799,51 +819,70 @@ function syncFavoriteButton() {
     favoriteButton.setAttribute("aria-pressed", String(favorite));
     favoriteButton.title = `${favorite ? "Retirer des favoris" : "Ajouter aux favoris"} · ${selected.player}`;
     favoriteButton.setAttribute("aria-label", favoriteButton.title);
-    favoriteButton.disabled = favoritePending.has(selected);
+    favoriteButton.disabled = reviewPending.has(selected);
 }
 
-favoriteButton?.addEventListener("click", async () => {
+async function reviewClip(button, updates) {
     const clip = selected;
-    if (!clip?.exportId || favoritePending.has(clip)) return;
-    const favorite = !clip.favorite;
-    const wasFocused = document.activeElement === favoriteButton;
-    favoritePending.add(clip);
-    syncFavoriteButton();
+    if (!clip?.exportId || reviewPending.has(clip)) return;
+    const wasFocused = document.activeElement === button;
+    reviewPending.add(clip);
+    syncReviewButtons();
     showClipStateError();
     try {
-        await request("/api/clip-state", { ...clipReference(clip), favorite });
-        clip.favorite = favorite;
-        if (statusFilter === "favorites" && !favorite && filtered.includes(clip)) {
+        const state = await request("/api/clip-state", { ...clipReference(clip), ...updates });
+        const wasPotential = isPotential(clip);
+        clip.favorite = state.favorite === true;
+        clip.potentialDismissed = state.potentialDismissed === true;
+        const potentialOnly = activeStatusFilters.has("potential");
+        const leavesFilter = (activeStatusFilters.has("favorites") && !clip.favorite)
+            || (potentialOnly && !isPotential(clip));
+        const advance = potentialOnly && wasPotential && selected === clip;
+        if (leavesFilter && (advance || filtered.includes(clip))) {
+            const next = advance ? visible[adjacentRowIndex(1)] ?? visible[adjacentRowIndex(-1)] : selected;
             const scroll = list.scrollTop;
-            renderClips();
+            renderClips(undefined, undefined, next);
             syncAddress(true);
+            if (advance && updates.favorite === true && selected) selectClip(selected, true);
             list.scrollTop = scroll;
+            if (next !== clip) revealSelectedRow();
         } else {
             const row = clipRowAt(visible.indexOf(clip));
-            const badge = row?.querySelector(".favorite-badge");
-            if (badge) badge.hidden = !favorite;
+            if (row) {
+                row.querySelector(".favorite-badge").hidden = !clip.favorite;
+                row.querySelector(".potential-badge").hidden = !isPotential(clip);
+            }
         }
     } catch (error) {
         showClipStateError(error);
     } finally {
-        favoritePending.delete(clip);
-        syncFavoriteButton();
+        reviewPending.delete(clip);
+        syncReviewButtons();
         if (wasFocused && document.activeElement === document.body) {
-            (favoriteButton.hidden ? favoritesFilter : favoriteButton).focus();
+            const activeFilter = statusFilters.get(activeStatusFilters.values().next().value);
+            (button.hidden ? activeFilter ?? favoriteButton : button).focus();
         }
     }
+}
+
+favoriteButton.addEventListener("click", () => reviewClip(favoriteButton, { favorite: !selected?.favorite }));
+dismissPotentialButton.addEventListener("click", () => {
+    if (isPotential(selected)) reviewClip(dismissPotentialButton, { potentialDismissed: true });
 });
 
 function renderClips(deletion, playingClip, preferred = selected) {
     const frequency = frequencySelect?.value;
     const query = clipSearch?.value.trim().toLocaleLowerCase("fr");
+    const potentialOnly = activeStatusFilters.has("potential");
     filtered = currentMatch.clips.filter((clip) => (filter === "all" || clip.kind === filter)
         && (!roundSelect.value || String(clip.round) === roundSelect.value)
         && (!frequency || throwFrequency(clip)?.category === frequency)
-        && (statusFilter !== "favorites" || clip.favorite)
-        && (statusFilter !== "unwatched" || !clip.watched)
+        && (!activeStatusFilters.has("favorites") || clip.favorite)
+        && (!activeStatusFilters.has("unwatched") || !clip.watched)
+        && (!potentialOnly || isPotential(clip))
         && matchesThrowFilters(clip)
         && (!query || calloutName(clip, currentMatch).toLocaleLowerCase("fr").includes(query)));
+    if (potentialOnly) filtered.sort(comparePotential);
     renderRadar();
     const rows = radarSelection ?? filtered;
     if (deletion && selected === deletion.clip) {
@@ -878,8 +917,13 @@ function renderClipPage(page) {
     if (!visible.length) {
         const empty = document.createElement("p");
         empty.textContent = "Aucun clip pour ces filtres.";
-        if (statusFilter === "unwatched") empty.textContent = "Aucun clip à traiter pour ces filtres.";
-        if (statusFilter === "favorites") empty.textContent = "Aucun favori pour ces filtres.";
+        if (activeStatusFilters.has("unwatched")) empty.textContent = "Aucun clip à traiter pour ces filtres.";
+        if (activeStatusFilters.has("favorites")) empty.textContent = "Aucun favori pour ces filtres.";
+        if (activeStatusFilters.has("potential")) {
+            empty.textContent = activeStatusFilters.has("unwatched")
+                ? "Aucun potentiel favori à traiter pour ces filtres."
+                : "Aucun potentiel favori pour ces filtres.";
+        }
         fragment.append(empty);
     }
     const start = clipPage * CLIPS_PER_PAGE;
@@ -924,7 +968,11 @@ function renderClipPage(page) {
                     favorite.className = "favorite-badge";
                     favorite.textContent = "Favori";
                     favorite.hidden = !clip.favorite;
-                    tags.append(favorite);
+                    const potential = document.createElement("span");
+                    potential.className = "potential-badge";
+                    potential.textContent = "Potentiel favori";
+                    potential.hidden = !isPotential(clip);
+                    tags.append(favorite, potential);
                 }
                 cell.append(tags);
             }
@@ -1228,7 +1276,8 @@ function switchMatch({ round = "", level = "upper", groupId, selectedId, fromAdd
     if (group) radarSelection = [group];
     const clip = selectedId && currentMatch.clips.find((item) => clipId(item) === selectedId);
     // A clip just marked as seen can still be open in the player under À traiter.
-    if (clip && statusFilter === "unwatched" && clip.watched && matchesThrowFilters(clip)) renderClips(undefined, clip);
+    if (clip?.watched && activeStatusFilters.has("unwatched") && matchesThrowFilters(clip)
+        && (!activeStatusFilters.has("potential") || isPotential(clip))) renderClips(undefined, clip);
     else renderClips(undefined, undefined, fromAddress ? clip || null : selected);
     revealSelectedRow();
 }
@@ -1242,8 +1291,6 @@ function updateMapOptions(preferred) {
 }
 
 portraitButton.hidden = !portrait;
-favoritesFilter.hidden = !clipStateEnabled;
-if (unwatchedFilter) unwatchedFilter.hidden = !clipStateEnabled;
 if (frequencySelect && library) {
     byId("frequency-control").hidden = false;
     for (const [value, label] of Object.entries(frequencyLabels)) addOption(frequencySelect, value, label);
@@ -1252,11 +1299,19 @@ if (frequencySelect && library) {
         syncAddress();
     });
 }
-for (const [button, status] of [[favoritesFilter, "favorites"], [unwatchedFilter, "unwatched"]]) {
-    button?.addEventListener("click", () => {
-        statusFilter = statusFilter === status ? "" : status;
+for (const [status, button] of statusFilters) {
+    button.hidden = !clipStateEnabled;
+    button.addEventListener("click", () => {
+        const enable = !activeStatusFilters.has(status);
+        if (enable) {
+            if (status === "favorites") activeStatusFilters.clear();
+            else activeStatusFilters.delete("favorites");
+            activeStatusFilters.add(status);
+        } else {
+            activeStatusFilters.delete(status);
+        }
         showStatusFilter();
-        renderClips();
+        renderClips(undefined, undefined, enable && status === "potential" ? null : selected);
         syncAddress();
     });
 }
@@ -1269,8 +1324,9 @@ function restoreLibraryAddress() {
     if (clipSearch) clipSearch.value = (params.get("q") ?? "").slice(0, 64);
     const type = params.get("type");
     filter = Object.hasOwn(kinds, type) ? type : "all";
-    const status = params.get("status");
-    statusFilter = clipStateEnabled && ["favorites", "unwatched"].includes(status) ? status : "";
+    const statuses = clipStateEnabled ? params.getAll("status") : [];
+    activeStatusFilters = new Set(statuses.includes("favorites") ? ["favorites"]
+        : statuses.filter((status) => statusFilters.has(status)));
     const frequency = params.get("frequency");
     if (frequencySelect) frequencySelect.value = Object.hasOwn(frequencyLabels, frequency) ? frequency : "";
     selectedTeam = params.get("team") ?? "";

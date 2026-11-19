@@ -45,6 +45,7 @@ select { color: #eef0f2; max-width: min(56vw, 270px); }
 .section-bar { min-height: 47px; padding: 7px 13px; flex-wrap: wrap; }
 .section-bar h2 { margin-right: auto; }
 .section-bar select { min-height: 30px; padding: 3px 6px; }
+.clip-review-controls { display: flex; flex-wrap: wrap; gap: 6px; }
 .radar { position: relative; aspect-ratio: 1; background: #10171a; }
 .radar-viewport { overflow: hidden; user-select: none; }
 .radar-content { position: absolute; inset: 0; transform-origin: 0 0; }
@@ -79,10 +80,11 @@ video { width: 100%; height: 100%; display: block; }
 .favorite-button { min-width: 36px; min-height: 36px; border: 1px solid var(--edge); border-radius: 5px; color: var(--muted); background: transparent; font-size: 1.2rem; line-height: 1; }
 .favorite-button:hover:enabled, .favorite-button[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
 .clip-row .watched-badge { display: inline-block; margin-left: 6px; padding: 1px 4px; border-radius: 4px; background: #3b4651; color: #e1e7ed; font-size: .76rem; }
-.frequency-badge, .favorite-badge { display: inline-block; max-width: 100%; border-radius: 4px; padding: 1px 5px; font-size: .76rem; }
+.frequency-badge, .favorite-badge, .potential-badge { display: inline-block; max-width: 100%; border-radius: 4px; padding: 1px 5px; font-size: .76rem; }
 .clip-tags { display: flex; gap: 3px 5px; flex-wrap: wrap; }
 .clip-tags:has(> :not([hidden])) { margin-top: 3px; }
 .favorite-badge { color: #ffe29a; background: #51401c; }
+.potential-badge { color: #c6ebec; background: #214748; }
 .frequency-rare { color: #ffd1cd; background: #692e32; }
 .frequency-common { color: #ffe0ae; background: #654022; }
 .frequency-frequent { color: #d2e9ff; background: #224e75; }

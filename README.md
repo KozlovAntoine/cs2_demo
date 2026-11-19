@@ -71,7 +71,11 @@ Dans la vidéothèque, sélectionne un lancer et clique sur **Générer vidéo 9
 
 Clique sur l’étoile sous la vidéo pour ajouter le clip sélectionné à tes favoris. Les filtres **Favoris** et **À traiter** s’appliquent à la liste et au radar. Un clic sur une tuile marque le clip comme **Vu**. Les états sont enregistrés dans la vidéothèque locale.
 
-L’URL de la vidéothèque mémorise la carte, le clip, le groupement radar et les filtres. Utilise Retour ou Avancer dans le navigateur pour retrouver une sélection, ou copie l’adresse pour la rouvrir sur ce PC. **Favoris** et **À traiter** s’activent l’un à la place de l’autre.
+**Potentiel favori** affiche les suggestions par score décroissant sur la carte choisie. Le classement apprend de tes favoris, des clips ouverts sans étoile et des refus explicites. Clique sur **Pas potentiel** à côté de **Début à 2 s** pour écarter une suggestion, y compris des prochains classements. Ajouter le clip à tes favoris masque son badge **Potentiel favori**.
+
+Pour actualiser les suggestions après une session de tri, lance `python favorite_suggestions.py` puis actualise la vidéothèque. La commande utilise NumPy, fourni avec l’installation locale de Demoparser à l’étape 6. Par défaut, elle propose les 54 % des clips candidats les mieux classés sur chaque carte, arrondis au clip supérieur. Si tu as les fichiers d’origine, `python favorite_throw_context.py "match-1.rar" "match-2.dem"` enrichit le prochain classement avec les rebonds, le temps dans le round, la vitesse, les dégâts et l’aveuglement des adversaires. Les deux commandes travaillent sur les clips existants et ne lancent aucune capture.
+
+L’URL de la vidéothèque mémorise la carte, le clip, le groupement radar et les filtres. Utilise Retour ou Avancer dans le navigateur pour retrouver une sélection, ou copie l’adresse pour la rouvrir sur ce PC. Active **Potentiel favori** et **À traiter** ensemble pour afficher les suggestions que tu n’as pas encore vues. **Favoris** s’active à la place de ces deux filtres.
 
 Les deux radars, dans la vidéothèque et dans l’éditeur, se zooment à la molette ou par pas de 10 % avec **−** et **+**. Une fois le radar agrandi, fais glisser le fond pour te déplacer. La main ouverte indique que tu peux déplacer la carte et se ferme pendant le glissement.
 
