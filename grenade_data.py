@@ -14,6 +14,7 @@ KINDS = {
     "Incendiary Grenade": "molo",
 }
 UTILITY_KINDS = frozenset(KINDS.values())
+PLAYER_SIDES = {"2": "t", "3": "ct"}
 
 ACTIVATIONS = {
     "smoke": "smokes_start",
@@ -30,6 +31,16 @@ def point(row, offset):
     return tuple(float(value) for value in row[offset:offset + 3])
 
 
+def read_round_clock(folder, demo):
+    # CSDM rounds rows contain the freeze end and the round result at columns 2 and 3.
+    try:
+        with (folder / f"{demo.stem}_rounds.csv").open(encoding="utf-8", newline="") as source:
+            return [(int(row[0]), int(row[2]), int(row[3])) for row in csv.reader(source)
+                    if len(row) > 3 and row[2].isdigit() and row[3].isdigit()]
+    except FileNotFoundError:
+        return []
+
+
 def read_clips(folder, demo: Path, kind):
     def rows(name):
         with (folder / f"{demo.stem}_{name}.csv").open(encoding="utf-8", newline="") as source:
@@ -43,6 +54,8 @@ def read_clips(folder, demo: Path, kind):
     tick_rate = round(float(demo_info[11]))
     if tick_rate <= 0:
         raise ValueError(f"Fréquence de ticks invalide dans {demo.name}.")
+
+    round_starts = {number: start for number, start, _ in read_round_clock(folder, demo)}
 
     shots = {row[4]: row for row in rows("shots") if row[2] in KINDS}
     activations = defaultdict(list)
@@ -100,11 +113,19 @@ def read_clips(folder, demo: Path, kind):
         if not flight:
             flight = [trajectory[0]]
         flight.append((activation_tick, *(end_event[1] if nade == "molo" and end_event else impact)))
-        clips.append({
-            "kind": nade, "player": player, "steamId": steam_id, "team": row[7].strip(), "round": int(round_number),
+        round_number = int(round_number)
+        clip = {
+            "kind": nade, "player": player, "steamId": steam_id, "team": row[7].strip(), "round": round_number,
+            "side": PLAYER_SIDES.get(row[6], ""),
             "launch": launch, "impact": impact, "launchTick": launch_tick,
             "activationTick": activation_tick, "startTick": start_tick, "endTick": end_tick,
             "estimated": estimated, "flight": flight, "yaw": float(row[11]),
-        })
+        }
+        if round_number in round_starts:
+            round_start = round_starts[round_number]
+            clip["roundLaunchSeconds"] = (launch_tick - round_start) / tick_rate
+            if not estimated:
+                clip["roundActivationSeconds"] = (activation_tick - round_start) / tick_rate
+        clips.append(clip)
 
     return map_name, tick_rate, sorted(clips, key=lambda clip: clip["launchTick"]), demo_info[0]

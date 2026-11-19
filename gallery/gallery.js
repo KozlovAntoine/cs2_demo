@@ -18,6 +18,8 @@ const COMMON_MAX = 10;
 const frequencyLabels = { rare: "Rare", common: "Commun", frequent: "Très fréquent" };
 const frequencyFormat = new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 2 });
 const HEATMAP_COLORS = [[40, 91, 241], [36, 190, 230], [251, 212, 65], [250, 122, 46], [225, 42, 49]];
+const HEATMAP_TIMER_SPEED = 5;
+const HEATMAP_TIMER_WINDOW_SECONDS = 3;
 
 const byId = (id) => document.getElementById(id);
 const matchSelect = byId("match");
@@ -28,6 +30,7 @@ const unwatchedFilter = byId("unwatched");
 const potentialFilter = byId("potential-favorites");
 const statusFilters = new Map([["favorites", favoritesFilter], ["unwatched", unwatchedFilter], ["potential", potentialFilter]]);
 const frequencySelect = byId("frequency");
+const sideSelects = [byId("clip-side"), byId("radar-side")];
 const pointSelect = byId("point");
 const levelSelect = byId("level");
 const video = byId("video");
@@ -54,6 +57,10 @@ const markers = byId("points");
 const radarRoutes = byId("radar-routes");
 const heatmapCanvas = byId("radar-heatmap");
 const heatmapToggle = byId("heatmap-toggle");
+const heatmapModeSelect = byId("heatmap-mode");
+const heatmapTimeControl = byId("heatmap-time");
+const heatmapPlay = byId("heatmap-play");
+const roundDuration = Number(heatmapTimeControl.max);
 const radarView = createRadarViewport(byId("radar"), byId("radar-content"), refreshRadarGrouping);
 const list = byId("clips");
 const clipPages = byId("clip-pages");
@@ -77,12 +84,16 @@ const copyStatus = byId("copy-status");
 let currentMatch;
 let filter = "all";
 let activeStatusFilters = new Set();
+let selectedSide = "";
 let selectedTeam = "";
 let selectedPlayers = new Set();
 const teamOptions = new Map();
 const playerOptions = new Map();
 const clipThrowers = new WeakMap();
-let heatmapEnabled = false;
+let heatmapMode = "";
+let heatmapTime = 0;
+let heatmapFrame;
+let heatmapTimeline;
 const reviewPending = new Set();
 let filtered = [];
 let visible = [];
@@ -233,11 +244,13 @@ function syncAddress(replace = false) {
         if (activeStatusFilters.has(status)) params.append("status", status);
     }
     if (frequencySelect?.value) params.set("frequency", frequencySelect.value);
+    if (selectedSide) params.set("side", selectedSide);
     if (selectedTeam) params.set("team", selectedTeam);
     for (const player of selectedPlayers) params.append("player", player);
     if (pointSelect.value !== "impact") params.set("points", pointSelect.value);
     if (levelSelect.value === "lower") params.set("floor", "lower");
-    if (heatmapEnabled) params.set("heatmap", "1");
+    if (heatmapMode) params.set("heatmap", heatmapMode === "timer" ? "timer" : "1");
+    if (heatmapMode === "timer" && heatmapTime) params.set("time", heatmapTime);
     const group = clipId(radarSelection?.[0]);
     if (group) params.set("group", group);
     const clip = clipId(selected);
@@ -386,7 +399,7 @@ function renderClipTitle(clip) {
 function selectClip(clip, autoplay = false) {
     const changed = selected !== clip;
     const scope = JSON.stringify([currentMatch?.map, filter, [...activeStatusFilters], roundSelect.value,
-        frequencySelect?.value, selectedTeam, [...selectedPlayers]]);
+        frequencySelect?.value, selectedSide, selectedTeam, [...selectedPlayers]]);
     if (scope !== playbackScope) {
         playbackScope = scope;
         playbackHistory = [];
@@ -482,7 +495,7 @@ function adjacentRowIndex(direction) {
 function playClip(clip) {
     const { radar } = currentMatch;
     if (radar?.lower) {
-        const endpoint = heatmapEnabled ? "impact" : pointSelect.value;
+        const endpoint = heatmapMode ? "impact" : pointSelect.value;
         const level = clip[endpoint][2] < radar.thresholdZ ? "lower" : "upper";
         if (level !== levelSelect.value) {
             levelSelect.value = level;
@@ -584,18 +597,8 @@ function renderRadarAnchorLinks(anchor) {
     }
 }
 
-function renderHeatmap(radar, lower) {
+function heatmapDensity(positions) {
     const { width, height } = heatmapCanvas;
-    const context = heatmapCanvas.getContext("2d");
-    if (!context) return;
-    const positions = filtered.flatMap((clip) => {
-        const position = radarPosition(clip.impact, radar);
-        return position?.lower === lower ? [{ ...position, weight: throwFrequency(clip)?.total ?? 1 }] : [];
-    });
-    byId("heatmap-empty").hidden = positions.length > 0;
-    context.clearRect(0, 0, width, height);
-    if (!positions.length) return;
-
     const density = new Float32Array(width * height);
     const radius = Math.round(width * .055);
     const radiusSquared = radius ** 2;
@@ -618,7 +621,11 @@ function renderHeatmap(radar, lower) {
         }
     }
 
-    const image = context.createImageData(width, height);
+    return { density, peak };
+}
+
+function paintHeatmap(context, density, peak) {
+    const image = context.createImageData(heatmapCanvas.width, heatmapCanvas.height);
     const lastColor = HEATMAP_COLORS.length - 1;
     for (let index = 0; index < density.length; index++) {
         if (!density[index]) continue;
@@ -634,6 +641,96 @@ function renderHeatmap(radar, lower) {
         image.data[pixel + 3] = 220 * Math.sqrt(strength);
     }
     context.putImageData(image, 0, 0);
+}
+
+function heatmapPositions(radar, lower, timed) {
+    return filtered.flatMap((clip) => {
+        const position = radarPosition(clip.impact, radar);
+        if (position?.lower !== lower) return [];
+        const occurrences = selectedSide ? matchingSideOccurrences(clip) : undefined;
+        if (!timed) return [{ ...position, weight: occurrences?.length ?? throwFrequency(clip)?.total ?? 1 }];
+        const activations = occurrences ? occurrences.map(([, , , , activation]) => activation)
+            : clip.activationSeconds ?? [clip.roundActivationSeconds];
+        const times = activations
+            .filter((time) => Number.isFinite(time) && time >= 0 && time <= roundDuration);
+        return times.length ? [{ ...position, times }] : [];
+    });
+}
+
+function renderHeatmap(radar, lower) {
+    const context = heatmapCanvas.getContext("2d");
+    if (!context) return;
+    const timed = heatmapMode === "timer";
+    let positions;
+    if (timed) {
+        if (!heatmapTimeline || heatmapTimeline.filtered !== filtered || heatmapTimeline.radar !== radar
+            || heatmapTimeline.lower !== lower) {
+            heatmapTimeline = { filtered, radar, lower, positions: heatmapPositions(radar, lower, true) };
+        }
+        const hasTimes = heatmapTimeline.positions.length > 0;
+        heatmapTimeControl.disabled = heatmapPlay.disabled = !hasTimes;
+        if (!hasTimes) stopHeatmapPlayback();
+        heatmapTimeControl.value = heatmapTime;
+        heatmapTimeControl.setAttribute("aria-valuetext", formatRoundTime(heatmapTime));
+        byId("heatmap-elapsed").textContent = `${formatRoundTime(heatmapTime)} / ${formatRoundTime(roundDuration)}`;
+        const windowStart = heatmapTime - HEATMAP_TIMER_WINDOW_SECONDS;
+        positions = heatmapTimeline.positions.flatMap((position) => {
+            const weight = position.times.filter((time) => time > windowStart && time <= heatmapTime).length;
+            return weight ? [{ ...position, weight }] : [];
+        });
+    } else {
+        positions = heatmapPositions(radar, lower, false);
+    }
+    const empty = byId("heatmap-empty");
+    empty.hidden = positions.length > 0;
+    if (positions.length) {
+        const { density, peak } = heatmapDensity(positions);
+        paintHeatmap(context, density, peak);
+    } else {
+        empty.textContent = timed
+            ? (heatmapTimeline.positions.length
+                ? `Aucune activation dans les ${HEATMAP_TIMER_WINDOW_SECONDS} dernières secondes.`
+                : "Aucune activation horodatée dans le timer.")
+            : "Aucune activation à afficher.";
+        context.clearRect(0, 0, heatmapCanvas.width, heatmapCanvas.height);
+    }
+}
+
+function formatRoundTime(seconds) {
+    return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+function stopHeatmapPlayback() {
+    if (heatmapFrame !== undefined) cancelAnimationFrame(heatmapFrame);
+    heatmapFrame = undefined;
+    heatmapPlay.textContent = `Lire ×${HEATMAP_TIMER_SPEED}`;
+}
+
+function seekHeatmap(seconds) {
+    heatmapTime = seconds;
+    renderHeatmap(currentMatch.radar, levelSelect.value === "lower");
+}
+
+function toggleHeatmapPlayback() {
+    if (heatmapFrame !== undefined) {
+        stopHeatmapPlayback();
+        syncAddress(true);
+        return;
+    }
+    if (heatmapTime === roundDuration) seekHeatmap(0);
+    const start = performance.now() - heatmapTime * 1000 / HEATMAP_TIMER_SPEED;
+    heatmapPlay.textContent = "Pause";
+    function advance(now) {
+        const time = Math.min(roundDuration, Math.floor((now - start) * HEATMAP_TIMER_SPEED / 1000));
+        if (time !== heatmapTime) seekHeatmap(time);
+        if (time >= roundDuration || heatmapPlay.disabled) {
+            stopHeatmapPlayback();
+            syncAddress(true);
+        } else {
+            heatmapFrame = requestAnimationFrame(advance);
+        }
+    }
+    heatmapFrame = requestAnimationFrame(advance);
 }
 
 function clusterRadarGroups(points, radius) {
@@ -683,7 +780,7 @@ function radarGroupsForZoom(radar, point, lower) {
 }
 
 function refreshRadarGrouping() {
-    if (!currentMatch?.radar || heatmapEnabled) return;
+    if (!currentMatch?.radar || heatmapMode) return;
     const scroll = list.scrollTop;
     const previousSelection = radarSelection;
     renderRadar();
@@ -699,9 +796,14 @@ function renderRadar() {
     radarView?.setAvailable(Boolean(radar));
     const point = pointSelect.value;
     const lower = levelSelect.value === "lower";
-    const showHeatmap = Boolean(radar) && heatmapEnabled;
+    const showHeatmap = Boolean(radar && heatmapMode);
+    const showTimer = showHeatmap && heatmapMode === "timer";
     heatmapToggle.hidden = !radar;
-    heatmapToggle.setAttribute("aria-pressed", String(heatmapEnabled));
+    heatmapToggle.setAttribute("aria-pressed", String(showHeatmap));
+    byId("heatmap-mode-control").hidden = !showHeatmap;
+    heatmapModeSelect.value = showTimer ? "timer" : "cumulative";
+    byId("heatmap-timer").hidden = !showTimer;
+    if (!showTimer) stopHeatmapPlayback();
     heatmapCanvas.hidden = !showHeatmap;
     byId("heatmap-legend").hidden = !showHeatmap;
     byId("heatmap-empty").hidden = true;
@@ -709,6 +811,7 @@ function renderRadar() {
     markers.replaceChildren();
     byId("radar-empty").hidden = Boolean(radar);
     byId("level-control").hidden = !radar?.lower;
+    byId("radar-side-control").hidden = !radar;
     radarImage.hidden = !radar;
     if (!radar) {
         radarSelection = undefined;
@@ -1088,7 +1191,20 @@ function indexThrowFilters() {
     }
 }
 
+function setThrowSide(side) {
+    selectedSide = side === "t" || side === "ct" ? side : "";
+    for (const select of sideSelects) select.value = selectedSide;
+}
+
+function matchingSideOccurrences(clip) {
+    const occurrences = clip.sideOccurrences ?? [[clip.steamId, clip.player, clip.team, clip.side, clip.roundActivationSeconds]];
+    return occurrences.filter(([steamId, player, team, side]) => side === selectedSide
+        && (!selectedTeam || throwFilterKey(team ?? "") === selectedTeam)
+        && (!selectedPlayers.size || selectedPlayers.has(steamId || `name:${throwFilterKey(player)}`)));
+}
+
 function matchesThrowFilters(clip) {
+    if (selectedSide) return matchingSideOccurrences(clip).length > 0;
     if (!selectedTeam && !selectedPlayers.size) return true;
     return clipThrowers.get(clip)?.some(({ teamId, playerId }) => (!selectedTeam || selectedTeam === teamId)
         && (!selectedPlayers.size || selectedPlayers.has(playerId)));
@@ -1257,7 +1373,13 @@ function renderRounds(current = "") {
 function switchMatch({ round = "", level = "upper", groupId, selectedId, fromAddress = false } = {}) {
     const previousMap = currentMatch?.map;
     currentMatch = catalogue.matches[Number(matchSelect.value)];
-    if (currentMatch?.map !== previousMap) radarView?.reset();
+    if (currentMatch?.map !== previousMap) {
+        radarView?.reset();
+        if (!fromAddress) {
+            stopHeatmapPlayback();
+            heatmapTime = 0;
+        }
+    }
     radarSelection = undefined;
     byId("library-content").hidden = !currentMatch;
     byId("library-empty").hidden = Boolean(currentMatch);
@@ -1329,11 +1451,16 @@ function restoreLibraryAddress() {
         : statuses.filter((status) => statusFilters.has(status)));
     const frequency = params.get("frequency");
     if (frequencySelect) frequencySelect.value = Object.hasOwn(frequencyLabels, frequency) ? frequency : "";
+    setThrowSide(params.get("side"));
     selectedTeam = params.get("team") ?? "";
     selectedPlayers = new Set(params.getAll("player"));
     renderThrowFilters();
     showStatusFilter();
-    heatmapEnabled = params.get("heatmap") === "1";
+    const heatmap = params.get("heatmap");
+    stopHeatmapPlayback();
+    heatmapMode = heatmap === "timer" ? "timer" : heatmap === "1" ? "cumulative" : "";
+    const time = Number(params.get("time"));
+    heatmapTime = Number.isInteger(time) && time >= 0 && time <= roundDuration ? time : 0;
     pointSelect.value = params.get("points") === "launch" ? "launch" : "impact";
     const round = params.get("round");
     switchMatch({
@@ -1365,10 +1492,21 @@ rememberVideoAudio();
 
 byId("heatmap-scale").style.backgroundImage = `linear-gradient(to right, ${HEATMAP_COLORS.map((color) => `rgb(${color.join(",")})`).join(", ")})`;
 heatmapToggle.addEventListener("click", () => {
-    heatmapEnabled = !heatmapEnabled;
+    heatmapMode = heatmapMode ? "" : "cumulative";
     renderClips();
     syncAddress();
 });
+heatmapModeSelect.addEventListener("change", () => {
+    heatmapMode = heatmapModeSelect.value;
+    renderRadar();
+    syncAddress();
+});
+heatmapTimeControl.addEventListener("input", () => {
+    stopHeatmapPlayback();
+    seekHeatmap(heatmapTimeControl.valueAsNumber);
+});
+heatmapTimeControl.addEventListener("change", () => syncAddress(true));
+heatmapPlay.addEventListener("click", toggleHeatmapPlayback);
 if (library) {
     if (clipSearch) {
         clipSearch.hidden = false;
@@ -1413,6 +1551,13 @@ roundSelect.addEventListener("change", () => {
     renderClips();
     syncAddress();
 });
+for (const select of sideSelects) {
+    select.addEventListener("change", () => {
+        setThrowSide(select.value);
+        renderClips();
+        syncAddress();
+    });
+}
 for (const control of [pointSelect, levelSelect]) {
     control.addEventListener("change", () => {
         radarSelection = undefined;

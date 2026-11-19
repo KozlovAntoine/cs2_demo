@@ -15,7 +15,7 @@ Utilitaires CS2 transforme des démos GOTV `.dem` et des archives HLTV `.rar` en
 3. Pour générer des clips et afficher les cartes dans l’éditeur de zones, installe l’édition officielle de **CS Demo Manager 3.21.0** pour Windows. Ouvre-la une première fois, sélectionne **Embedded (recommended)** et clique sur **Connect** pour initialiser la base. [Version 3.21.0](https://github.com/akiver/cs-demo-manager/releases/tag/v3.21.0) · [Guide d’installation](https://cs-demo-manager.com/docs/installation)
 4. Pour le rendu, installe **CS2** et laisse **Steam** ouvert et connecté. Dans les options de l’onglet **Video** d’un match dans CS Demo Manager, installe ou mets à jour **HLAE** et **FFmpeg**. Le bouton **Générer vidéo 9:16** utilise aussi FFmpeg. [Guide vidéo de CS Demo Manager](https://cs-demo-manager.com/docs/guides/video#installingupdating-required-software)
 5. Pour ouvrir des archives `.rar`, installe **7-Zip** dans le dossier proposé par l’installeur, ou ajoute son dossier au `PATH`. [7-Zip](https://www.7-zip.org/)
-6. Pour afficher les commandes de lancer et copier les positions et angles dans la console CS2, exécute cette commande depuis le dossier du projet. Le lecteur est facultatif pour générer les clips. [Demoparser](https://github.com/LaihoE/demoparser)
+6. Pour enregistrer les positions des joueurs et afficher les commandes de lancer, exécute cette commande depuis le dossier du projet. Le lecteur est facultatif pour générer les clips. [Demoparser](https://github.com/LaihoE/demoparser)
 
    ```powershell
    python -m pip install --target .local/throw-parser demoparser2==0.42.2 pandas
@@ -55,15 +55,21 @@ Avant la capture, chaque lancer est comparé aux lancers de la même carte et du
 
 Sur le radar, les repères se regroupent en foyers à 100 %. En zoomant, chaque foyer se divise progressivement. Les niveaux haut et bas restent affichés sur leurs radars respectifs. Le rayon visuel `RADAR_CLUSTER_RADIUS_PX` dans `gallery/gallery.js` règle la densité des repères. Un foyer sélectionné conserve sa liste pendant le zoom et permet de sélectionner ensuite l’un de ses sous-groupes.
 
+Dans **Heatmap**, le mode **Cumulée** montre toutes les activations correspondant aux filtres. Le mode **Timer** montre les activations des **3 dernières secondes**, de **0:00** à **1:55** après la fin du gel. Utilise le curseur ou clique sur **Lire ×5**. Chaque occurrence apparaît à son heure d’activation, y compris les doublons. La constante `HEATMAP_TIMER_WINDOW_SECONDS` dans `gallery/gallery.js` règle la durée de la fenêtre. Les activations estimées ou en dehors de **0:00–1:55** restent visibles dans la vue cumulée.
+
 La vidéothèque compte toutes les occurrences de chaque lancer dans les démos traitées, y compris les doublons ignorés. La moyenne porte sur les parties où le lancer a été observé. Réimporter une démo met à jour son compteur. Le menu **Fréquence** filtre les badges **Rare** (moins de 2), **Commun** (de 2 à 10) et **Très fréquent** (plus de 10). Les seuils `RARE_BELOW` et `COMMON_MAX` dans `gallery/gallery.js` s’appliquent dès l’actualisation de la page. Les clips existants obtiennent une fréquence dès qu’une nouvelle analyse retrouve leur lancer.
 
 Les menus **Équipe** et **Joueur** proposent chacun une recherche. Tu peux choisir une équipe et plusieurs joueurs. Pour qu’un clip apparaisse, il suffit qu’un des joueurs sélectionnés ait effectué ce lancer avec l’équipe choisie. Un doublon peut donc faire apparaître le clip déjà disponible. L’équipe correspond à celle enregistrée dans la démo au moment du lancer. L’identifiant Steam relie les pseudonymes successifs d’un même joueur.
 
-Pour compléter les anciens clips, relis les démos ou archives d’origine avec `--index-only`. La commande met à jour la vidéothèque sans lancer CS2. Avant cette passe, les anciens clips restent filtrables par le pseudonyme du lanceur enregistré dans le clip.
+Le menu **Côté** est synchronisé entre les clips et le radar. Choisis **T** ou **CT** pour filtrer les lancers, ou **Les deux** pour retrouver toute la sélection. Un clip peut apparaître des deux côtés si le même lancer a été effectué côté T et côté CT. Avec un côté précis, la heatmap compte uniquement les occurrences qui correspondent aussi aux filtres d’équipe et de joueur.
+
+Pour compléter les anciens clips, relis les démos ou archives d’origine avec `--index-only`. La commande met à jour les équipes, les joueurs, les côtés et les temps de départ et d’activation sans lancer CS2. Avant cette passe, les anciens clips restent filtrables par le pseudonyme du lanceur enregistré dans le clip.
 
 ```powershell
 python utility_video.py --index-only "match-1.rar" "match-2.dem"
 ```
+
+Avec Demoparser installé, l’analyse écrit aussi `exports/.round-replays/<identifiant-démo>.json.gz` pour chaque démo. Ce fichier regroupe les positions XYZ à cinq relevés par seconde par round et par SteamID, avec les pseudos et les ticks de début et de fin. Le relevé couvre le round depuis la fin du gel jusqu’à son résultat. Le filtre d’utilitaire et la sélection des clips à générer sont indépendants de ce relevé.
 
 Les copies de travail des démos et les fichiers de capture intermédiaires sont nettoyés automatiquement après chaque capture et en cas d’échec. Si l’application ou le PC s’arrête avant le nettoyage, le prochain export supprime les fichiers temporaires signalés par l’export interrompu. Les `.dem` ou `.rar` d’origine servent aux prochains exports. Les clips restent lisibles depuis leurs MP4.
 

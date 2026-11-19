@@ -1,4 +1,5 @@
 import json
+import math
 import os
 import re
 import stat
@@ -115,13 +116,42 @@ def read_throw_usage(path):
 
 def throw_usage_summary(usage):
     throwers = set()
+    activation_seconds = []
+    side_occurrences = []
+    timed = False
     for entry in usage.values():
-        if isinstance(entry, dict) and isinstance(entry.get("throwers"), list):
+        if not isinstance(entry, dict):
+            continue
+        if isinstance(entry.get("throwers"), list):
             throwers.update(tuple(row) for row in entry["throwers"] if isinstance(row, list)
                             and len(row) == 3 and all(isinstance(value, str) for value in row))
-    return {"usage": {"total": sum(map(throw_count, usage.values())), "demos": len(usage)},
-            "throwers": [{"steamId": steam_id, "player": player, "team": team}
-                         for steam_id, player, team in sorted(throwers)]}
+        if isinstance(observations := entry.get("observations"), list):
+            timed = True
+            for row in observations:
+                if not (isinstance(row, list) and len(row) == 6 and all(isinstance(v, str) for v in row[:4])):
+                    continue
+                steam_id, player, team, side, _, activation = row
+                throwers.add((steam_id, player, team))
+                if type(activation) in (int, float) and math.isfinite(activation):
+                    activation_seconds.append(activation)
+                else:
+                    activation = None
+                if side in ("t", "ct"):
+                    side_occurrences.append([steam_id, player, team, side, activation])
+            continue
+        if isinstance(times := entry.get("timings"), list):
+            timed = True
+            for row in times:
+                if isinstance(row, list) and len(row) == 2 and type(row[1]) in (int, float) and math.isfinite(row[1]):
+                    activation_seconds.append(row[1])
+    summary = {"usage": {"total": sum(map(throw_count, usage.values())), "demos": len(usage)},
+               "throwers": [{"steamId": steam_id, "player": player, "team": team}
+                            for steam_id, player, team in sorted(throwers)]}
+    if timed:
+        summary["activationSeconds"] = activation_seconds
+    if side_occurrences:
+        summary["sideOccurrences"] = side_occurrences
+    return summary
 
 
 @lru_cache(maxsize=16384)
@@ -155,14 +185,19 @@ def throw_usage_summaries(folder):
     return summaries
 
 
+def throw_observations(occurrences):
+    # The final two fields are seconds since freeze end. Keep identity and side on the same observation.
+    return [[clip["steamId"], clip["player"], clip["team"], clip.get("side", ""),
+             clip.get("roundLaunchSeconds"), clip.get("roundActivationSeconds")] for clip in occurrences]
+
+
 def record_throw_usage(folder, filename, demo, occurrences):
     clip_file = folder / "clips" / filename
     if not clip_file.is_file():
         return False
     path = throw_usage_path(folder, filename)
     usage = read_throw_usage(path)
-    throwers = {(clip["steamId"], clip["player"], clip["team"]) for clip in occurrences}
-    entry = {"count": len(occurrences), "throwers": [list(thrower) for thrower in sorted(throwers)]}
+    entry = {"count": len(occurrences), "observations": throw_observations(occurrences)}
     if usage.get(demo) == entry:
         return True
     usage[demo] = entry

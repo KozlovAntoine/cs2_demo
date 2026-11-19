@@ -35,6 +35,9 @@
             <button id="potential-favorites" type="button" aria-pressed="false" hidden>Potentiel favori</button>
             <label id="frequency-control" for="frequency" hidden>Fréquence <select id="frequency"><option value="">Toutes</option></select></label>
             <label for="round">Round <select id="round"></select></label>
+            <label for="clip-side">Côté <select id="clip-side">
+              <option value="">Les deux</option><option value="t">T</option><option value="ct">CT</option>
+            </select></label>
             <details id="team-filter" class="throw-filter" hidden>
               <summary>Équipe <span class="throw-filter-value"></span></summary>
               <div class="throw-filter-menu">
@@ -97,7 +100,18 @@
           <label for="level" class="control" id="level-control" hidden>Niveau <select id="level">
             <option value="upper">Haut</option><option value="lower">Bas</option>
           </select></label>
+          <label for="radar-side" class="control" id="radar-side-control" hidden>Côté <select id="radar-side">
+            <option value="">Les deux</option><option value="t">T</option><option value="ct">CT</option>
+          </select></label>
           <button id="heatmap-toggle" class="zone-button" type="button" aria-controls="radar-heatmap" aria-pressed="false" hidden>Heatmap</button>
+          <label for="heatmap-mode" class="control" id="heatmap-mode-control" hidden>Mode <select id="heatmap-mode">
+            <option value="cumulative">Cumulée</option><option value="timer">Timer</option>
+          </select></label>
+        </div>
+        <div id="heatmap-timer" class="heatmap-timer" hidden>
+          <button id="heatmap-play" class="zone-button" type="button">Lire ×5</button>
+          <input id="heatmap-time" type="range" min="0" max="115" step="1" value="0" aria-label="Temps écoulé dans le round">
+          <output id="heatmap-elapsed" for="heatmap-time" aria-live="off">0:00 / 1:55</output>
         </div>
         <div class="radar radar-viewport" id="radar">
           <div id="radar-content" class="radar-content">

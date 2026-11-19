@@ -93,17 +93,21 @@ def throw_controls(samples, kind, launch_tick, tick_rate):
     return result or None
 
 
-def add_throw_inputs(demo, clips, tick_rate):
+def open_demo_parser(demo):
     # Prefer the normal Python environment and also support a project-local installation on Windows.
     local_parser = Path(__file__).resolve().parent / ".local" / "throw-parser"
     if local_parser.is_dir() and str(local_parser) not in sys.path:
         sys.path.append(str(local_parser))
     from demoparser2 import DemoParser
 
+    return DemoParser(str(demo))
+
+
+def add_throw_inputs(demo, clips, tick_rate):
     lookback = max(1, round(tick_rate * 0.55))
     players = sorted({int(clip["steamId"]) for clip in clips})
     ticks = sorted({tick for clip in clips for tick in range(max(0, clip["launchTick"] - lookback), clip["launchTick"] + 1)})
-    parsed = DemoParser(str(demo)).parse_ticks(TICK_FIELDS, players=players, ticks=ticks)
+    parsed = open_demo_parser(demo).parse_ticks(TICK_FIELDS, players=players, ticks=ticks)
     samples = {(sample["steamid"], sample["tick"]): sample for sample in parsed.to_dict("records")}
     for clip in clips:
         player = int(clip["steamId"])

@@ -21,6 +21,7 @@ from demo_imports import demo_fingerprint, read_demo_imports, record_demo_import
 from grenade_data import KINDS, read_clips
 from job_control import JobCancelled, check_job_cancelled, current_control, job_checkpoint
 from job_log import current_job_log, log_command_output
+from round_replay import write_round_replay
 from throw_groups import RADAR_GROUP_RADIUS, THROW_GROUP_SIZE_UNITS, group_throws
 from throw_inputs import add_throw_inputs
 
@@ -307,12 +308,25 @@ def publish_gallery(out, source, matches):
     return out / "index.html"
 
 
-def analyze_demo(installation, demo, kind, work):
+def analyze_demo(installation, demo, kind, work, *, replay_output=None):
     job_checkpoint()
     with tempfile.TemporaryDirectory(dir=work) as temp:
         analyzer = installation / "resources" / "static" / "csda.exe"
         run([analyzer, f"-demo-path={demo}", f"-output={temp}", "-format=csdm", "-positions"])
-        return read_clips(Path(temp), demo, kind)
+        folder = Path(temp)
+        result = read_clips(folder, demo, kind)
+        if replay_output is not None:
+            map_name, tick_rate, _, checksum = result
+            try:
+                write_round_replay(replay_output, demo, folder, map_name, tick_rate, checksum)
+            except (ImportError, OSError, ValueError, RuntimeError, TypeError, KeyError) as error:
+                message = f"Relevé des joueurs indisponible pour {demo.name} · {error}"
+                if logger := current_job_log():
+                    logger.warning(message, exc_info=True)
+                elif sys.stderr is not None:
+                    print(message, file=sys.stderr)
+            job_checkpoint()
+        return result
 
 
 def record_known_throw_usage(output, previous, occurrences, checksum, *, current_export=None):
@@ -337,7 +351,7 @@ def index_throw_metadata(args):
                     work = Path(temp)
                     print(f"Indexation · {source.name}", flush=True)
                     for demo in load_demos(source, work, args.map):
-                        map_name, _, clips, checksum = analyze_demo(installation, demo, args.type, work)
+                        map_name, _, clips, checksum = analyze_demo(installation, demo, args.type, work, replay_output=output)
                         previous, removed = throw_references(output, map_name)
                         _, occurrences = group_throws(clips, previous, removed=removed)
                         indexed = record_known_throw_usage(output, previous, occurrences, checksum)
@@ -459,7 +473,8 @@ def export_demos(args, source, installation, out, work, update, on_import, on_pr
         fingerprint = demo_fingerprint(demo) if not args.prepare else None
         if fingerprint and fingerprint[0] in imports:
             update("Analyse", f"{demo.name} · Déjà importé.")
-        map_name, tick_rate, clips, checksum = analyze_demo(installation, demo, args.type, work)
+        map_name, tick_rate, clips, checksum = analyze_demo(installation, demo, args.type, work,
+                                                            replay_output=None if args.prepare else out.parent)
         if not clips:
             update("Analyse", f"{map_name} : aucun lancer correspondant.")
             finish_demo(demo, fingerprint, demo_member)
@@ -615,7 +630,7 @@ def main():
     parser.add_argument("--csdm", type=Path, help="Dossier d’installation de CS Demo Manager")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--prepare", action="store_true", help="Prépare les séquences et le radar sans lancer CS2")
-    mode.add_argument("--index-only", action="store_true", help="Indexe les joueurs et équipes des clips existants sans capture")
+    mode.add_argument("--index-only", action="store_true", help="Indexe les lancers et les positions des joueurs sans capture")
     parser.add_argument("--limit", type=int, help="Limite de lancers par carte pour un essai")
     parser.add_argument("--no-open", action="store_true", help="N’ouvre pas le navigateur après export")
     args = parser.parse_args()
