@@ -1,4 +1,5 @@
 import argparse
+import gzip
 import json
 import mimetypes
 import os
@@ -33,10 +34,11 @@ from utility_video import (
 
 APP_ID = "cs2-utility-videos"
 STATIC = {"/": "index.html", "/app.css": "app.css", "/app.js": "app.js", "/utility.ico": "utility.ico"}
-GALLERY_ASSETS = {"index.html", "gallery.css", "gallery.js", "callouts.js"}
+GALLERY_ASSETS = {"index.html", "gallery.css", "gallery.js", "callouts.js", "InterVariable.woff2", "Inter-OFL.txt"}
 GALLERY_FILES = GALLERY_ASSETS | {"catalogue.js"}
 CONTENT_POLICY = ("default-src 'self'; style-src 'self' 'unsafe-inline'; frame-ancestors 'self'; "
                   "object-src 'none'; base-uri 'none'; form-action 'self'")
+QUEUE_FINISHED = {"complete", "partial", "skipped", "cancelled", "error"}
 
 
 class LocalServer(ThreadingHTTPServer):
@@ -82,6 +84,8 @@ class App:
         self.selection = None
         self.job = {"state": "idle"}
         self.job_control = None
+        self.queue = {}
+        self.capture_progress = None
 
     def busy(self):
         return self.picking or self.job["state"] == "running"
@@ -156,10 +160,20 @@ class App:
             options = argparse.Namespace(demo=paths[0], output=self.output, csdm=self.csdm,
                                          type=kind, map=None, demo_member=member, limit=limit,
                                          prepare=False, no_open=True)
+            queue = {
+                (path, entry["member"]): {
+                    "name": entry["member"].rsplit("/", 1)[-1] if entry["member"] else path.name,
+                    "archive": path.name if entry["member"] else None,
+                    "state": "queued",
+                }
+                for path, source in zip(paths, self.selection["sources"])
+                for entry in source["demos"] or [{"member": None}]
+                if member is None or entry["member"] == member
+            }
 
             def render_export(report):
                 if len(paths) == 1:
-                    export = generate(options, report, self.mark_demo_imported)
+                    export = generate(options, report, self.mark_demo_imported, self.update_queue)
                     result = {"failedFiles": int(bool(export.failed_demos))}
                     if export.gallery:
                         result["url"] = export_url(export.gallery.parent) + "/index.html"
@@ -170,7 +184,8 @@ class App:
             description += f"Utilitaire · {kind} | Limite · {limit if limit is not None else 'aucune'}"
             if member is not None:
                 description += f"\nDémo sélectionnée dans l’archive · {member}"
-            return self.start_job(render_export, log_kind="export", description=description, controllable=True)
+            return self.start_job(render_export, log_kind="export", description=description, controllable=True,
+                                  queue=queue)
 
     def mark_demo_imported(self, path, member):
         with self.lock:
@@ -196,7 +211,8 @@ class App:
 
                 try:
                     job_checkpoint()
-                    export = generate_export(options, self.output, report_file, self.mark_demo_imported)
+                    export = generate_export(options, self.output, report_file, self.mark_demo_imported,
+                                             self.update_queue)
                     last_gallery = export.gallery or last_gallery
                     if export.failed_demos:
                         errors.append(f"{label} · {export.failed_demos} {'démo en erreur' if export.failed_demos == 1 else 'démos en erreur'}.")
@@ -206,6 +222,8 @@ class App:
                 except (OSError, ValueError, subprocess.SubprocessError) as error:
                     errors.append(f"{label} · {error_message(error)}")
                     current_job_log().exception("%s · Échec du traitement", label)
+                    with self.lock:
+                        self.finish_queue("error", path)
                     report("Export des démos", errors[-1])
 
         if len(errors) == len(paths) and last_gallery is None:
@@ -265,10 +283,45 @@ class App:
                 raise ValueError("Attends la fin du rendu 9:16 avant de supprimer ce clip.")
             delete_clip(self.output, reference["exportId"], reference["file"])
 
+    def update_queue(self, source, member, state, *, capture=None, **details):
+        with self.lock:
+            key = (source, member)
+            row = self.queue.get(key)
+            if row is None:
+                return
+            if capture is not None:
+                self.capture_progress = (row, capture)
+            elif self.capture_progress and self.capture_progress[0] is row:
+                row.update(self.capture_progress[1].snapshot())
+                self.capture_progress = None
+            if "published" in details:
+                count = details["published"]
+                details["generated"] = max(row.get("generated", 0), count)
+                if count:
+                    details["captured"] = max(row.get("captured") or 0, count)
+                gallery = details.pop("gallery", None)
+                if gallery:
+                    details["url"] = export_url(gallery.parent) + "/index.html"
+            row.update(state=state, **details)
+
+    def finish_queue(self, state, source=None):
+        if self.capture_progress:
+            row, capture = self.capture_progress
+            row.update(capture.snapshot())
+            self.capture_progress = None
+        for (path, _), row in self.queue.items():
+            if (source is None or source == path) and row["state"] not in QUEUE_FINISHED:
+                row["state"] = state
+
     def job_status(self):
         status = self.job.copy()
         if self.job_control and status["state"] == "running":
             status.update(self.job_control.status())
+        if self.capture_progress:
+            row, capture = self.capture_progress
+            row.update(capture.snapshot())
+        if self.queue:
+            status["queue"] = [row.copy() for row in self.queue.values()]
         return status
 
     def control_job(self, data):
@@ -279,10 +332,12 @@ class App:
             self.job_control.request(data.get("action"))
             return self.job_status()
 
-    def start_job(self, render, *, log_kind, description, controllable=False, **details):
+    def start_job(self, render, *, log_kind, description, controllable=False, queue=None, **details):
         job_id = uuid4().hex
         logger = create_job_log(self.output, log_kind, job_id)
         self.job_control = JobControl() if controllable else None
+        self.queue = queue or {}
+        self.capture_progress = None
         self.job = {"id": job_id, "state": "running", "phase": "Préparation", "messages": [],
                     "controllable": controllable, **details}
         threading.Thread(target=self.render, args=(render, logger, description), daemon=True).start()
@@ -315,6 +370,7 @@ class App:
                 state = "complete"
                 logger.info("Traitement terminé%s", " avec erreurs" if result.get("failedFiles") else "")
         with self.lock:
+            self.finish_queue("skipped" if state == "complete" else state)
             self.job.update(state=state, **result)
 
 
@@ -346,9 +402,25 @@ class Handler(BaseHTTPRequestHandler):
     def json_response(self, data, status=HTTPStatus.OK):
         self.send_bytes(json.dumps(data, ensure_ascii=False).encode("utf-8"), "application/json", status)
 
-    def send_bytes(self, body, content_type, status=HTTPStatus.OK):
+    def send_bytes(self, body, content_type, status=HTTPStatus.OK, *, allow_gzip=False):
+        compress = False
+        if allow_gzip:
+            for encoding in self.headers.get("Accept-Encoding", "").lower().split(","):
+                name, _, quality = encoding.partition(";")
+                if name.strip() == "gzip":
+                    try:
+                        compress = not quality or float(quality.strip().removeprefix("q=")) > 0
+                    except ValueError:
+                        pass
+                    break
+        if compress:
+            body = gzip.compress(body, compresslevel=1)
         self.send_response(status)
         self.send_header("Content-Type", f"{content_type}; charset=utf-8")
+        if allow_gzip:
+            self.send_header("Vary", "Accept-Encoding")
+        if compress:
+            self.send_header("Content-Encoding", "gzip")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         if self.command != "HEAD":
@@ -400,8 +472,8 @@ class Handler(BaseHTTPRequestHandler):
                             match["zones"] = []
             script = ("window.utilityLibrary = true;\nwindow.utilityPortrait = true;\nwindow.utilityClipState = true;\n"
                       "window.utilityCallouts = true;\nwindow.utilityClipCallout = true;\n"
-                      f"{CATALOGUE_PREFIX}{json.dumps(data, ensure_ascii=True)};\n")
-            self.send_bytes(script.encode("ascii"), "text/javascript")
+                      f"{CATALOGUE_PREFIX}{json.dumps(data, ensure_ascii=True, separators=(',', ':'))};\n")
+            self.send_bytes(script.encode("ascii"), "text/javascript", allow_gzip=True)
         else:
             file = (ROOT / "app" / STATIC[path]) if path in STATIC else self.gallery_file(path)
             if path.startswith("/library/") and path.removeprefix("/library/") in GALLERY_ASSETS:

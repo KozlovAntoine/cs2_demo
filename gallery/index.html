@@ -14,26 +14,59 @@
     <header>
       <div>
         <h1>Utilitaires CS2</h1>
+        <p class="library-intro">Explorez, apprenez et retrouvez vos repères en jeu.</p>
         <p id="demo-name"></p>
       </div>
       <div class="map-controls">
         <label for="match"><span id="match-label">Démo</span> <select id="match"></select></label>
-        <button id="fullscreen-view" class="zone-button" type="button" aria-pressed="false" hidden>Fullscreen</button>
         <button id="edit-callouts" class="zone-button" type="button" hidden>Éditer les zones</button>
       </div>
     </header>
     <p id="library-empty" class="library-message" hidden>Aucune vidéo dans la vidéothèque. Lance un export pour ajouter tes premiers clips.</p>
     <div id="library-content">
-    <div class="toolbar">
-      <div id="types" role="group" aria-label="Filtrer par utilitaire"></div>
-      <div class="toolbar-filters">
-        <button id="favorites" type="button" aria-pressed="false" hidden>Favoris</button>
-        <button id="unwatched" type="button" aria-pressed="false" hidden>À traiter</button>
-        <label id="frequency-control" for="frequency" hidden>Fréquence <select id="frequency"><option value="">Toutes</option></select></label>
-        <label for="round">Round <select id="round"></select></label>
-      </div>
-    </div>
     <div class="workspace">
+      <div class="details">
+        <div class="toolbar">
+          <input id="clip-search" type="search" maxlength="64" aria-label="Rechercher un callout" placeholder="Rechercher un callout…" hidden>
+          <div id="types" role="group" aria-label="Filtrer par utilitaire"></div>
+          <div class="toolbar-filters">
+            <button id="favorites" type="button" aria-pressed="false" hidden>Favoris</button>
+            <button id="unwatched" type="button" aria-pressed="false" hidden>À traiter</button>
+            <label id="frequency-control" for="frequency" hidden>Fréquence <select id="frequency"><option value="">Toutes</option></select></label>
+            <label for="round">Round <select id="round"></select></label>
+          </div>
+        </div>
+        <section id="video-panel" class="panel" aria-labelledby="clip-title">
+          <div class="section-bar">
+            <h2 id="clip-title">Clip</h2>
+            <button id="edit-clip-callout" class="zone-button" type="button" hidden>Modifier la zone</button>
+            <span id="clip-meta"></span>
+          </div>
+          <div class="player">
+            <video id="video" controls playsinline preload="metadata" hidden></video>
+            <p id="video-empty" role="status"></p>
+          </div>
+          <div id="clip-actions" class="clip-actions" hidden>
+            <button id="portrait-action" type="button">Générer vidéo 9:16</button>
+            <button id="delete-clip" class="delete-clip" type="button" hidden>Supprimer</button>
+            <button id="favorite-clip" class="favorite-button" type="button" aria-keyshortcuts="F" aria-pressed="false" hidden>☆</button>
+            <p id="portrait-status" role="status"></p>
+          </div>
+          <p id="delete-status" class="delete-status" role="status" hidden></p>
+        </section>
+        <section id="clips-panel" class="panel" aria-labelledby="list-title">
+          <div class="section-bar"><h2 id="list-title">Lancers</h2><span id="count" aria-live="polite"></span></div>
+          <p id="clip-state-error" class="delete-status" role="alert" hidden></p>
+          <div id="clips" class="clip-list" aria-label="Clips filtrés"></div>
+          <nav id="clip-pages" class="clip-pages" aria-label="Pages des lancers" hidden>
+            <button id="clip-prev-page" class="zone-button" type="button" aria-controls="clips">Précédente</button>
+            <span id="clip-page-status" role="status"></span>
+            <button id="clip-next-page" class="zone-button" type="button" aria-controls="clips">Suivante</button>
+          </nav>
+        </section>
+      </div>
+      <aside class="library-inspector" aria-label="Le lancer, en détail">
+        <h2 class="inspector-title">Le lancer, en détail</h2>
       <section id="radar-panel" class="panel" aria-labelledby="radar-title">
         <div class="section-bar">
           <h2 id="radar-title">Radar</h2>
@@ -65,31 +98,13 @@
           <div class="heatmap-ticks"><span>Faible</span><span>Moyenne</span><span>Forte</span></div>
         </div>
       </section>
-      <div class="details">
-        <section id="video-panel" class="panel" aria-labelledby="clip-title">
-          <div class="section-bar">
-            <h2 id="clip-title">Clip</h2>
-            <button id="edit-clip-callout" class="zone-button" type="button" hidden>Modifier la zone</button>
-            <span id="clip-meta"></span>
-          </div>
-          <div class="player">
-            <video id="video" controls playsinline preload="metadata" hidden></video>
-            <p id="video-empty" role="status"></p>
-          </div>
-          <div id="clip-actions" class="clip-actions" hidden>
-            <button id="portrait-action" type="button">Générer vidéo 9:16</button>
-            <button id="delete-clip" class="delete-clip" type="button" hidden>Supprimer</button>
-            <button id="favorite-clip" class="favorite-button" type="button" aria-keyshortcuts="F" aria-pressed="false" hidden>☆</button>
+        <section id="throw-console" class="panel throw-console" aria-labelledby="throw-console-title" hidden>
+          <h2 id="throw-console-title">Reproduire ce lancer</h2>
             <div id="throw-controls" class="throw-controls" hidden>
               <span id="throw-controls-label" class="lineup-label">Commandes</span>
               <div id="throw-keys" class="throw-keys" role="group" aria-labelledby="throw-controls-label"></div>
             </div>
-            <p id="portrait-status" role="status"></p>
-          </div>
-          <p id="delete-status" class="delete-status" role="status" hidden></p>
-        </section>
-        <section id="throw-console" class="panel throw-console" aria-labelledby="throw-console-title" hidden>
-          <h2 id="throw-console-title" class="lineup-label">Console CS2</h2>
+
           <div class="console-command" id="console-command" hidden>
             <code id="throw-command"></code>
             <button id="copy-command" type="button" aria-label="Copier les commandes CS2">
@@ -98,13 +113,7 @@
           </div>
           <p id="copy-status" role="status"></p>
         </section>
-        <section id="clips-panel" class="panel" aria-labelledby="list-title">
-          <div class="section-bar"><h2 id="list-title">Lancers</h2><span id="count" aria-live="polite"></span></div>
-          <p id="clip-state-error" class="delete-status" role="alert" hidden></p>
-          <div id="clips" class="clip-list" aria-label="Clips filtrés"></div>
-        </section>
-      </div>
-      <aside id="fullscreen-sidebar" class="fullscreen-sidebar" aria-label="Carte, filtres et lancers" hidden></aside>
+      </aside>
     </div>
     </div>
   </main>
@@ -126,11 +135,23 @@
   </dialog>
   <dialog id="callout-editor" aria-labelledby="callout-title">
     <div class="callout-heading">
-      <h2 id="callout-title">Zones de callout</h2>
+      <div><h2 id="callout-title">Donnez un nom à chaque repère.</h2>
+        <p>Dessinez des zones sur la carte pour nommer automatiquement vos lancers.</p></div>
       <a href="https://steamcommunity.com/sharedfiles/filedetails/?l=french&amp;id=2721539148" target="_blank" rel="noopener noreferrer">Guide Steam ↗</a>
       <button id="close-callouts" class="zone-button" type="button">Fermer</button>
     </div>
     <div class="callout-workspace">
+      <div class="callout-map-panel">
+        <div class="callout-tools">
+        <label>Carte <select id="callout-map"></select></label>
+        <label id="callout-floor-control" hidden>Niveau <select id="callout-floor"><option value="upper">Haut</option><option value="lower">Bas</option></select></label>
+        <button id="new-zone" class="zone-button" type="button">Nouvelle zone</button>
+        <div id="draw-zone-actions" class="zone-actions" hidden>
+          <button id="undo-vertex" class="zone-button" type="button">Retirer le dernier point</button>
+          <button id="close-zone-shape" class="zone-button" type="button">Fermer le tracé</button>
+          <button id="cancel-zone" class="zone-button zone-cancel" type="button">Annuler</button>
+        </div>
+        </div>
       <div id="callout-radar" class="callout-radar radar-viewport">
         <div id="callout-radar-content" class="radar-content">
           <img id="callout-radar-image" alt="Radar de la carte" draggable="false">
@@ -142,17 +163,14 @@
           <button type="button" data-zoom="in" aria-label="Augmenter le zoom">+</button>
         </div>
       </div>
+      </div>
       <div class="callout-sidebar">
-        <label>Carte <select id="callout-map"></select></label>
-        <label id="callout-floor-control" hidden>Niveau <select id="callout-floor"><option value="upper">Haut</option><option value="lower">Bas</option></select></label>
-        <button id="new-zone" class="zone-button" type="button">Nouvelle zone</button>
+        <section class="callout-card" aria-labelledby="zone-list-title">
+        <h3 id="zone-list-title">Zones de la carte</h3>
         <label id="callout-zone-control">Zone <select id="callout-zone"></select></label>
-        <div id="draw-zone-actions" class="zone-actions" hidden>
-          <button id="undo-vertex" class="zone-button" type="button">Retirer le dernier point</button>
-          <button id="close-zone-shape" class="zone-button" type="button">Fermer le tracé</button>
-          <button id="cancel-zone" class="zone-button zone-cancel" type="button">Annuler</button>
-        </div>
-        <form id="save-zone" hidden>
+        </section>
+        <form id="save-zone" class="callout-card" hidden>
+          <h3>Zone sélectionnée</h3>
           <label>Nom <input id="zone-name" maxlength="64" required></label>
           <div class="zone-actions">
             <button class="zone-button zone-save" type="submit" disabled>Enregistrer</button>
@@ -161,7 +179,7 @@
             <button id="delete-zone" class="delete-clip" type="button">Supprimer la zone</button>
           </div>
         </form>
-        <section id="zone-layers" aria-labelledby="zone-layers-title" hidden>
+        <section class="callout-card" id="zone-layers" aria-labelledby="zone-layers-title" hidden>
           <h3 id="zone-layers-title">Superpositions</h3>
           <p id="zone-layers-help">Zones qui se chevauchent avec la sélection. Glisse-les pour les réordonner. La nº 1 passe devant.</p>
           <ol id="zone-layer-list" aria-describedby="zone-layers-help"></ol>

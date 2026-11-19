@@ -17,12 +17,20 @@ let picking = false;
 let closed = false;
 let galleryPath;
 let lastLibrarySearch = "";
+let openCalloutsAfterLoad = false;
 const ESTIMATED_SECONDS_PER_CLIP = 13;
 let estimatedJobId;
 let clipFinishEstimates = {};
 let clipEstimatePauses = {};
 let displayedJob;
 let jobControlPending = false;
+let queueJobId;
+const queueLabels = {
+    queued: "En attente", analysis: "Analyse en cours", starting: "Lancement de CS2", capture: "Capture en cours",
+    generating: "Génération en cours", publishing: "Ajout à la galerie", complete: "Terminée", partial: "Rendu incomplet",
+    skipped: "Sans nouveau clip", cancelled: "Annulée", error: "En erreur", paused: "En pause", cancelling: "Annulation en cours",
+};
+const activeQueueStates = new Set(["analysis", "starting", "capture", "generating", "publishing"]);
 
 async function request(path, payload) {
     const options = payload === undefined ? undefined : {
@@ -148,20 +156,95 @@ function estimatedJobMessages(job) {
     });
 }
 
+function displayQueue(job, messages) {
+    const rows = job.queue ?? [];
+    const body = byId("queue-rows");
+    const actions = byId("job-controls");
+    if (queueJobId !== job.id) {
+        byId("legacy-job-actions").append(actions);
+        body.replaceChildren();
+        queueJobId = job.id;
+    }
+    byId("queue-table").hidden = byId("queue-summary").hidden = rows.length === 0;
+    if (!rows.length) return;
+
+    const active = rows.find((row) => activeQueueStates.has(row.state)) ?? rows.find((row) => row.state === "queued");
+    const captureEstimate = messages.findLast((message) => message.includes("CS2 enregistre "))?.match(/Fin estimée : .+$/)?.[0];
+    const summary = new Map();
+    for (const [index, row] of rows.entries()) {
+        if (!body.children[index]) body.append(byId("queue-row-template").content.cloneNode(true));
+        const element = body.children[index];
+        const current = row === active && job.state === "running";
+        const state = current && job.cancelRequested ? "cancelling" : current && job.paused ? "paused" : row.state;
+        element.dataset.state = state;
+        element.querySelector(".queue-source strong").textContent = row.name;
+        const sourceDetails = element.querySelector(".queue-source small");
+        sourceDetails.textContent = row.map || row.archive || "";
+        sourceDetails.title = row.archive || "";
+        element.querySelector(".queue-state span").textContent = queueLabels[state];
+
+        const count = (value) => row.total ? `${value ?? "—"} / ${row.total}` : "—";
+        const [capture, generation] = element.querySelectorAll(".queue-clips span");
+        capture.textContent = `Capture ${count(row.captured)}`;
+        generation.textContent = `Génération ${count(row.generated)}`;
+
+        const recording = ["starting", "capture"].includes(row.state);
+        const done = recording ? row.captured : row.generated;
+        const percent = row.total && Number.isInteger(done)
+            ? (done >= row.total ? 100 : Math.min(99, Math.round(100 * done / row.total))) : null;
+        const bar = element.querySelector("progress");
+        bar.value = percent ?? 0;
+        bar.hidden = percent === null;
+        bar.setAttribute("aria-label", `${recording ? "Capture" : "Génération"} · ${row.name}`);
+        element.querySelector(".queue-progress span").textContent = percent === null ? "—" : `${percent} %`;
+        const duplicates = row.duplicates ? `${row.duplicates} ${row.duplicates === 1 ? "doublon ignoré" : "doublons ignorés"}` : "";
+        const published = row.published === undefined ? "" : `${row.published} ${row.published === 1 ? "clip disponible" : "clips disponibles"}`;
+        const estimate = current && recording && !job.cancelRequested ? captureEstimate : "";
+        element.querySelector(".queue-progress small").textContent = [row.note, published, duplicates, estimate].filter(Boolean).join(" · ");
+
+        const cell = element.querySelector(".queue-actions");
+        const link = cell.querySelector("a");
+        link.hidden = !row.url;
+        if (row.url) {
+            link.href = `/?${new URLSearchParams({ gallery: row.url.split("/")[2] })}`;
+            link.textContent = "Voir la galerie ↗";
+        }
+        if (current && actions.parentElement !== cell) cell.append(actions);
+
+        const category = activeQueueStates.has(state) || state === "cancelling" ? "running" : state;
+        summary.set(category, (summary.get(category) ?? 0) + 1);
+    }
+    if (!active || job.state !== "running") byId("legacy-job-actions").append(actions);
+    byId("queue-summary").textContent = [
+        ["running", "en cours"], ["queued", "en attente"], ["paused", "en pause"],
+        ["complete", "terminée", "terminées"], ["partial", "incomplète", "incomplètes"], ["skipped", "sans nouveau clip"],
+        ["error", "en erreur"], ["cancelled", "annulée", "annulées"],
+    ].filter(([key]) => summary.has(key)).map(([key, singular, plural = singular]) => {
+        const count = summary.get(key);
+        return `${count} ${count === 1 ? singular : plural}`;
+    }).join(" · ");
+}
+
 function displayJob(job) {
     displayedJob = job;
     const running = job.state === "running";
     working = running;
     byId("working").hidden = !running;
+    const activeRow = job.queue?.find((row) => activeQueueStates.has(row.state));
+    const livePhase = ["starting", "capture", "generating", "publishing"].includes(activeRow?.state)
+        ? queueLabels[activeRow.state] : "";
     const stateLabel = job.cancelRequested ? "Annulation en cours" : job.paused ? "En pause"
-        : job.pauseRequested ? "Pause demandée" : running ? `${job.phase} en cours` : "";
+        : job.pauseRequested ? "Pause demandée" : running ? livePhase || `${job.phase} en cours` : "";
     byId("working").textContent = stateLabel;
     byId("status").hidden = job.state === "idle";
+    const hasQueue = Boolean(job.queue?.length);
+    document.querySelector(".status-heading").hidden = hasQueue && job.state !== "error";
     byId("spinner").hidden = !running || job.paused;
     const phase = job.state === "error" ? "Export interrompu"
         : job.cancelRequested || job.paused || job.pauseRequested ? stateLabel : job.phase ?? "";
     if (byId("phase").textContent !== phase) byId("phase").textContent = phase;
     const messages = estimatedJobMessages(job);
+    byId("latest").hidden = hasQueue && job.state !== "error" && (running || !job.failedFiles);
     byId("latest").textContent = job.error ?? messages.at(-1) ?? "";
     byId("latest").classList.toggle("error", job.state === "error");
     if (byId("messages").dataset.snapshot !== messages.join("\n")) {
@@ -173,10 +256,13 @@ function displayJob(job) {
         }));
     }
     byId("log").hidden = messages.length < 2;
+    displayQueue(job, messages);
     byId("job-controls").hidden = !running || !job.controllable;
     byId("pause-job").textContent = job.paused || job.pauseRequested ? "Reprendre" : "Pause";
+    byId("cancel-job").textContent = hasQueue ? "Annuler" : "Annuler le traitement";
     byId("pause-job").disabled = jobControlPending || Boolean(job.cancelRequested);
     byId("cancel-job").disabled = jobControlPending || Boolean(job.cancelRequested);
+    byId("job-control-hint").hidden = !running || !job.controllable;
     byId("job-control-hint").textContent = job.cancelRequested ? "Arrêt et récupération des clips finalisés…"
         : job.paused ? "Clique sur Reprendre pour continuer."
         : job.pauseRequested ? "La pause prendra effet à la fin de la démo en cours."
@@ -207,7 +293,7 @@ function route() {
     const params = new URLSearchParams(location.search);
     const galleryId = params.get("gallery");
     const exportPath = galleryId && /^[\w-]+$/.test(galleryId) ? `/exports/${galleryId}/index.html` : null;
-    if (params.get("view") === "export" || (!exportPath && libraryAvailable === false)) return null;
+    if (["export", "galleries"].includes(params.get("view")) || (!exportPath && libraryAvailable === false)) return null;
     return exportPath ?? "/library/index.html";
 }
 
@@ -221,13 +307,11 @@ function setAddress(search, replace = false) {
 
 window.utilityNavigation = {
     search: () => location.search,
-    fullscreen(enabled) {
-        document.body.classList.toggle("library-fullscreen", enabled && route() === "/library/index.html" && !closed);
-    },
     update(search, replace) {
         if (route() !== "/library/index.html" || closed) return;
         lastLibrarySearch = search;
         setAddress(search, replace);
+        updateNavigation("library");
     },
 };
 
@@ -240,7 +324,6 @@ function renderRoute(focus = false, refresh = false) {
         return;
     }
     const library = path.startsWith("/library/");
-    if (!library || galleryPath !== path) document.body.classList.remove("library-fullscreen");
     if (library) lastLibrarySearch = location.search.slice(1);
     if (galleryPath !== path || refresh) {
         galleryPath = path;
@@ -251,8 +334,7 @@ function renderRoute(focus = false, refresh = false) {
     }
     home.hidden = true;
     byId("gallery-view").hidden = false;
-    byId("library-link").setAttribute("aria-pressed", String(library));
-    byId("back").setAttribute("aria-pressed", "false");
+    updateNavigation(library ? "library" : "gallery");
     if (focus) byId("library-link").focus();
 }
 
@@ -274,12 +356,39 @@ function openGallery(url) {
 }
 
 function showHome(focus = true) {
-    document.body.classList.remove("library-fullscreen");
+    openCalloutsAfterLoad = false;
     byId("gallery-view").hidden = true;
     home.hidden = false;
-    byId("library-link").setAttribute("aria-pressed", "false");
-    byId("back").setAttribute("aria-pressed", "true");
-    if (focus && !controls.disabled) choose.focus();
+    const section = new URLSearchParams(location.search).get("view") === "galleries" ? "galleries" : "export";
+    updateNavigation(section);
+    if (focus && section === "export" && !controls.disabled) choose.focus();
+}
+
+function updateNavigation(section) {
+    document.body.dataset.view = section;
+    const active = {library: "library-link", export: "back",
+        galleries: "galleries-link", gallery: "galleries-link"}[section];
+    for (const id of ["library-link", "back", "galleries-link"]) {
+        if (id === active) byId(id).setAttribute("aria-current", "page");
+        else byId(id).removeAttribute("aria-current");
+    }
+    byId("route-label").textContent = {library: "Vidéothèque", export: "Importation",
+        galleries: "Galeries", gallery: "Galerie"}[section];
+    byId("route-action").textContent = section === "export" ? "› Ouvrir la vidéothèque" : "↥ Importer .dem ou archive .rar";
+    byId("route-action").disabled = section === "export" && !libraryAvailable;
+    byId("callouts-link").disabled = !libraryAvailable;
+}
+
+function openCallouts() {
+    if (route() === "/library/index.html" && !byId("gallery-view").hidden) {
+        const button = gallery.contentDocument?.getElementById("edit-callouts");
+        if (button && !button.hidden) {
+            button.click();
+            return;
+        }
+    }
+    openCalloutsAfterLoad = true;
+    openLibrary(undefined, false);
 }
 
 function mapName(map) {
@@ -352,6 +461,15 @@ byId("back").addEventListener("click", () => {
     renderRoute(true);
 });
 byId("library-link").addEventListener("click", () => openLibrary());
+byId("callouts-link").addEventListener("click", openCallouts);
+byId("galleries-link").addEventListener("click", () => {
+    setAddress("view=galleries");
+    renderRoute(false);
+});
+byId("route-action").addEventListener("click", () => {
+    if (document.body.dataset.view === "export") openLibrary();
+    else byId("back").click();
+});
 window.addEventListener("popstate", () => renderRoute());
 document.addEventListener("keydown", (event) => {
     if (galleryPath === "/library/index.html" && !byId("gallery-view").hidden) {
@@ -359,6 +477,13 @@ document.addEventListener("keydown", (event) => {
     }
 });
 gallery.addEventListener("load", () => {
+    if (openCalloutsAfterLoad && galleryPath === "/library/index.html" && !byId("gallery-view").hidden) {
+        const button = gallery.contentDocument?.getElementById("edit-callouts");
+        if (button && !button.hidden) {
+            openCalloutsAfterLoad = false;
+            button.click();
+        }
+    }
     const heading = gallery.contentDocument?.querySelector("main > header h1");
     if (heading && !galleryPath?.startsWith("/library/")) heading.hidden = true;
 });
@@ -369,8 +494,8 @@ quit.addEventListener("click", async () => {
         showHome();
         home.hidden = true;
         quit.hidden = true;
-        byId("library-link").hidden = true;
-        byId("back").hidden = true;
+        document.querySelector(".app-sidebar nav").hidden = true;
+        byId("route-action").hidden = true;
         byId("closed").hidden = false;
     } catch (error) {
         showHome();

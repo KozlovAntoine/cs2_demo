@@ -14,6 +14,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
+from capture_progress import CaptureProgress
 from clip_library import CATALOGUE_PREFIX, record_throw_usage, throw_references
 from csdm_capture_pause import shorten_capture_pause
 from demo_imports import demo_fingerprint, read_demo_imports, record_demo_import
@@ -293,7 +294,7 @@ def publish_videos(render_folder, clips, out, map_number, *, completed_only=Fals
 
 
 def publish_gallery(out, source, matches):
-    for file_name in ("index.html", "gallery.css", "gallery.js", "callouts.js"):
+    for file_name in ("index.html", "gallery.css", "gallery.js", "callouts.js", "InterVariable.woff2", "Inter-OFL.txt"):
         shutil.copyfile(ROOT / "gallery" / file_name, out / file_name)
     catalogue = {"title": source.name, "groupRadius": RADAR_GROUP_RADIUS,
                  "groupBoxUnits": THROW_GROUP_SIZE_UNITS, "matches": matches}
@@ -345,11 +346,11 @@ def reserve_export(output):
         yield
 
 
-def generate(args, report=None, on_import=None):
+def generate(args, report=None, on_import=None, on_progress=None):
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     with reserve_export(output):
-        return generate_export(args, output, report, on_import)
+        return generate_export(args, output, report, on_import, on_progress)
 
 
 def remove_work_directory(path, parent):
@@ -391,7 +392,7 @@ def release_staged_demo(demo, work):
         demo.unlink(missing_ok=True)
 
 
-def export_demos(args, source, installation, out, work, update, on_import):
+def export_demos(args, source, installation, out, work, update, on_import, on_progress):
     if source.suffix.lower() == ".rar":
         update("Extraction", f"Extraction des démos de {source.name}…")
     member = getattr(args, "demo_member", None)
@@ -402,18 +403,24 @@ def export_demos(args, source, installation, out, work, update, on_import):
     duplicate_count = 0
     failed_demos = 0
 
-    def finish_demo(demo, fingerprint):
+    def finish_demo(demo, fingerprint, demo_member):
         if args.prepare:
             return
         release_staged_demo(demo, work)
         record_demo_import(out.parent, imports, *fingerprint)
         if on_import is not None:
-            member = demo.relative_to(work / "demos").as_posix() if source.suffix.lower() == ".rar" else None
-            on_import(source, member)
+            on_import(source, demo_member)
 
     for map_number, demo in enumerate(demos, 1):
         job_checkpoint()
         progress = f"{map_number}/{len(demos)}"
+        demo_member = demo.relative_to(work / "demos").as_posix() if source.suffix.lower() == ".rar" else None
+
+        def queue(state, **details):
+            if on_progress is not None:
+                on_progress(source, demo_member, state, **details)
+
+        queue("analysis")
         update("Analyse", f"Démo {progress} · {demo.name}")
         fingerprint = demo_fingerprint(demo) if not args.prepare else None
         if fingerprint and fingerprint[0] in imports:
@@ -421,7 +428,8 @@ def export_demos(args, source, installation, out, work, update, on_import):
         map_name, tick_rate, clips, checksum = analyze_demo(installation, demo, args.type, work)
         if not clips:
             update("Analyse", f"{map_name} : aucun lancer correspondant.")
-            finish_demo(demo, fingerprint)
+            finish_demo(demo, fingerprint, demo_member)
+            queue("skipped", map=map_name, note="Aucun lancer correspondant.")
             continue
         radar = radar_layout(map_name, installation)
         saved_radar, previous, removed = throw_references(out.parent, map_name)
@@ -439,8 +447,10 @@ def export_demos(args, source, installation, out, work, update, on_import):
                     record_throw_usage(folder, Path(clip["video"]).name, checksum, count)
         clips = unique[:args.limit]
         if not clips:
-            finish_demo(demo, fingerprint)
+            finish_demo(demo, fingerprint, demo_member)
+            queue("skipped", map=map_name, duplicates=skipped)
             continue
+        queue("analysis", map=map_name, total=len(clips), duplicates=skipped)
         try:
             add_throw_inputs(demo, clips, tick_rate)
         except JobCancelled:
@@ -456,12 +466,14 @@ def export_demos(args, source, installation, out, work, update, on_import):
                f", {estimates} fins estimées.")
         config, render_folder = create_video_job(demo, clips, tick_rate, work / f"map-{map_number}")
         cancelled = False
+        capture_failed = False
         missing = 0
         if not args.prepare:
             expected = len(clips)
-            capture_failed = False
 
             def before_capture():
+                if on_progress is not None:
+                    queue("starting", capture=CaptureProgress(demo, render_folder, expected))
                 update("Capture", f"Démo {progress} · CS2 enregistre {expected} "
                        f"{'clip' if expected == 1 else 'clips'} sur {map_name}.")
 
@@ -477,6 +489,7 @@ def export_demos(args, source, installation, out, work, update, on_import):
                 if logger := current_job_log():
                     logger.exception("Échec de la capture · %s", demo.name)
                 update("Export", f"Démo {progress} · Erreur de capture · {error}")
+            queue("publishing")
             update("Export", f"Démo {progress} · Ajout des MP4 à la galerie.")
             clips = publish_videos(render_folder, clips, out, map_number, completed_only=cancelled or capture_failed)
             missing = expected - len(clips)
@@ -497,16 +510,19 @@ def export_demos(args, source, installation, out, work, update, on_import):
         if not args.prepare:
             remove_work_directory(config.parent, work)
         if cancelled:
+            queue("cancelled", published=len(clips), gallery=gallery if clips else None)
             raise JobCancelled()
         if missing:
             release_staged_demo(demo, work)
         else:
-            finish_demo(demo, fingerprint)
+            finish_demo(demo, fingerprint, demo_member)
+        queue("partial" if missing or capture_failed else "complete",
+              published=len(clips), gallery=gallery if clips else None)
         check_job_cancelled()
     return gallery, duplicate_count, failed_demos
 
 
-def generate_export(args, output, report, on_import=None):
+def generate_export(args, output, report, on_import=None, on_progress=None):
     def update(phase, message):
         if report is not None:
             report(phase, message)
@@ -531,7 +547,8 @@ def generate_export(args, output, report, on_import=None):
         if not args.prepare:
             (out / CAPTURE_WORK_MARKER).touch(exist_ok=False)
         update("Préparation", f"Dossier de la galerie : {out}")
-        gallery, duplicate_count, failed_demos = export_demos(args, source, installation, out, work, update, on_import)
+        gallery, duplicate_count, failed_demos = export_demos(args, source, installation, out, work, update,
+                                                            on_import, on_progress)
     except JobCancelled as error:
         if (out / "index.html").is_file():
             error.gallery = out / "index.html"

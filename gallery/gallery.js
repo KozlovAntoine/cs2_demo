@@ -2,6 +2,7 @@
 
 const catalogue = window.utilityCatalogue;
 const RADAR_CLUSTER_RADIUS_PX = 48;
+const CLIPS_PER_PAGE = 36;
 const library = window.utilityLibrary === true;
 const portrait = library && window.utilityPortrait === true;
 const clipStateEnabled = library && window.utilityClipState === true;
@@ -15,11 +16,13 @@ const mouseModes = { left: "Clic gauche", middle: "Clic milieu · gauche + droit
 const RARE_BELOW = 2;
 const COMMON_MAX = 10;
 const frequencyLabels = { rare: "Rare", common: "Commun", frequent: "Très fréquent" };
+const frequencyFormat = new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 2 });
 const HEATMAP_COLORS = [[40, 91, 241], [36, 190, 230], [251, 212, 65], [250, 122, 46], [225, 42, 49]];
 
 const byId = (id) => document.getElementById(id);
 const matchSelect = byId("match");
 const roundSelect = byId("round");
+const clipSearch = byId("clip-search");
 const favoritesFilter = byId("favorites");
 const unwatchedFilter = byId("unwatched");
 const frequencySelect = byId("frequency");
@@ -32,10 +35,11 @@ const markers = byId("points");
 const radarRoutes = byId("radar-routes");
 const heatmapCanvas = byId("radar-heatmap");
 const heatmapToggle = byId("heatmap-toggle");
-const fullscreenButton = byId("fullscreen-view");
-const fullscreenSidebar = byId("fullscreen-sidebar");
 const radarView = createRadarViewport(byId("radar"), byId("radar-content"), refreshRadarGrouping);
 const list = byId("clips");
+const clipPages = byId("clip-pages");
+const previousPage = byId("clip-prev-page");
+const nextPage = byId("clip-next-page");
 const deleteButton = byId("delete-clip");
 const favoriteButton = byId("favorite-clip");
 const editClipCallout = byId("edit-clip-callout");
@@ -54,11 +58,10 @@ let currentMatch;
 let filter = "all";
 let statusFilter = "";
 let heatmapEnabled = false;
-let fullscreenEnabled = false;
-let fullscreenSlots = [];
 const favoritePending = new Set();
 let filtered = [];
 let visible = [];
+let clipPage = 0;
 let radarSelection;
 let radarGroupingCache;
 let selected;
@@ -190,29 +193,6 @@ function createRadarViewport(viewport, content, onZoom) {
     };
 }
 
-function setLibraryFullscreen(enabled) {
-    navigation?.fullscreen(enabled);
-    if (enabled === fullscreenEnabled) return;
-    fullscreenEnabled = enabled;
-    if (enabled) {
-        const selectors = [".map-controls", ".toolbar", "#radar-panel", "#throw-console", "#clips-panel"];
-        fullscreenSlots = selectors.map((selector) => {
-            const element = document.querySelector(selector);
-            const placeholder = document.createComment("fullscreen position");
-            element.before(placeholder);
-            fullscreenSidebar.append(element);
-            return { element, placeholder };
-        });
-    } else {
-        for (const { element, placeholder } of fullscreenSlots) placeholder.replaceWith(element);
-        fullscreenSlots = [];
-    }
-    fullscreenSidebar.hidden = !enabled;
-    document.body.classList.toggle("fullscreen-view", enabled);
-    fullscreenButton.setAttribute("aria-pressed", String(enabled));
-    fullscreenButton.textContent = enabled ? "Quitter fullscreen" : "Fullscreen";
-}
-
 function clipId(clip) {
     return clip?.exportId ? `${clip.exportId}/${clip.file}` : undefined;
 }
@@ -222,13 +202,13 @@ function syncAddress(replace = false) {
     const params = new URLSearchParams();
     if (currentMatch) params.set("map", currentMatch.map);
     if (filter !== "all") params.set("type", filter);
+    if (clipSearch?.value.trim()) params.set("q", clipSearch.value.trim());
     if (roundSelect.value) params.set("round", roundSelect.value);
     if (statusFilter) params.set("status", statusFilter);
     if (frequencySelect?.value) params.set("frequency", frequencySelect.value);
     if (pointSelect.value !== "impact") params.set("points", pointSelect.value);
     if (levelSelect.value === "lower") params.set("floor", "lower");
     if (heatmapEnabled) params.set("heatmap", "1");
-    if (fullscreenEnabled) params.set("fullscreen", "1");
     const group = clipId(radarSelection?.[0]);
     if (group) params.set("group", group);
     const clip = clipId(selected);
@@ -259,7 +239,7 @@ function frequencyBadge(clip, showAverage = false) {
     const frequency = throwFrequency(clip);
     if (!frequency) return;
     const { average, category, total, demos } = frequency;
-    const mean = average.toLocaleString("fr-FR", { maximumFractionDigits: 2 });
+    const mean = frequencyFormat.format(average);
     const badge = document.createElement("span");
     badge.className = `frequency-badge frequency-${category}`;
     badge.textContent = showAverage ? `${frequencyLabels[category]} · ${mean}/partie` : frequencyLabels[category];
@@ -421,17 +401,25 @@ function selectClip(clip, autoplay = false) {
     for (const row of list.querySelectorAll(".clip-row")) {
         row.setAttribute("aria-pressed", String(visible[Number(row.dataset.index)] === selected));
     }
-    for (const marker of markers.querySelectorAll("button")) {
-        marker.setAttribute("aria-pressed", String(marker.clips.some((item) => radarSelection?.includes(item))));
-    }
     for (const marker of radarRoutes.querySelectorAll("button")) {
         marker.setAttribute("aria-pressed", String(marker.clip === selected));
     }
     if (autoplay) syncAddress();
 }
 
+function clipRowAt(index) {
+    return list.querySelector(`.clip-row[data-index="${index}"]`);
+}
+
+function showClipRow(index) {
+    if (index < 0) return;
+    const page = Math.floor(index / CLIPS_PER_PAGE);
+    if (page !== clipPage) renderClipPage(page);
+    return clipRowAt(index);
+}
+
 function revealSelectedRow() {
-    const row = list.querySelector('.clip-row[aria-pressed="true"]');
+    const row = showClipRow(visible.indexOf(selected));
     if (!row) return;
     const item = row.getBoundingClientRect();
     const viewport = list.getBoundingClientRect();
@@ -486,9 +474,10 @@ function handleLibraryShortcut(event) {
     if (!clip) return;
     if (previousClip) playbackIndex = historyIndex;
     event.preventDefault();
-    const row = list.querySelector(`.clip-row[data-index="${visible.indexOf(clip)}"]`);
+    const listFocused = list.contains(document.activeElement);
+    const row = showClipRow(visible.indexOf(clip));
     if (row) {
-        if (list.contains(document.activeElement)) row.focus({ preventScroll: true });
+        if (listFocused) row.focus({ preventScroll: true });
         row.click();
     } else {
         playClip(clip);
@@ -510,8 +499,12 @@ function positionOnRadar(element, { left, top }) {
 
 function renderRadarLinks() {
     radarRoutes.replaceChildren();
-    const anchors = [...markers.children].filter((marker) => marker.clips.some((clip) => radarSelection?.includes(clip)));
-    for (const marker of markers.children) marker.hidden = Boolean(anchors.length && !anchors.includes(marker));
+    const selection = new Set(radarSelection);
+    const anchors = new Set([...markers.children].filter((marker) => marker.clips.some((clip) => selection.has(clip))));
+    for (const marker of markers.children) {
+        marker.hidden = anchors.size > 0 && !anchors.has(marker);
+        marker.setAttribute("aria-pressed", String(anchors.has(marker)));
+    }
     for (const anchor of anchors) renderRadarAnchorLinks(anchor);
 }
 
@@ -543,6 +536,7 @@ function renderRadarAnchorLinks(anchor) {
         const floor = position.lower !== lower ? ` · niveau ${position.lower ? "bas" : "haut"}` : "";
         point.title = `${label} · ${clip.player} · R${clip.round}${floor}`;
         point.setAttribute("aria-label", point.title);
+        point.setAttribute("aria-pressed", String(clip === selected));
         point.addEventListener("click", () => {
             selectClip(clip, true);
             revealSelectedRow();
@@ -604,19 +598,23 @@ function renderHeatmap(radar, lower) {
 }
 
 function clusterRadarGroups(points, radius) {
-    const visited = new Set();
+    const visited = new Uint8Array(points.length);
     const groups = [];
-    for (const seed of points) {
-        if (visited.has(seed)) continue;
-        const clips = [];
-        let left = 0;
-        let top = 0;
-        for (const point of points) {
-            if (visited.has(point) || Math.hypot(seed.left - point.left, seed.top - point.top) > radius) continue;
-            visited.add(point);
+    const radiusSquared = radius ** 2;
+    for (let index = 0; index < points.length; index++) {
+        if (visited[index]) continue;
+        const seed = points[index];
+        const clips = [...seed.clips];
+        let left = seed.left * clips.length;
+        let top = seed.top * clips.length;
+        for (let candidate = index + 1; candidate < points.length; candidate++) {
+            if (visited[candidate]) continue;
+            const point = points[candidate];
+            if ((seed.left - point.left) ** 2 + (seed.top - point.top) ** 2 > radiusSquared) continue;
+            visited[candidate] = 1;
             left += point.left * point.clips.length;
             top += point.top * point.clips.length;
-            clips.push(...point.clips);
+            for (const clip of point.clips) clips.push(clip);
         }
         groups.push({ left: left / clips.length, top: top / clips.length, clips });
     }
@@ -646,9 +644,12 @@ function radarGroupsForZoom(radar, point, lower) {
 }
 
 function refreshRadarGrouping() {
-    if (!currentMatch) return;
+    if (!currentMatch?.radar || heatmapEnabled) return;
     const scroll = list.scrollTop;
+    const previousSelection = radarSelection;
     renderRadar();
+    if (previousSelection === radarSelection || (previousSelection && radarSelection?.length === previousSelection.length
+        && radarSelection.every((clip, index) => clip === previousSelection[index]))) return;
     renderClipList(selected, false, selected);
     list.scrollTop = scroll;
     syncAddress(true);
@@ -675,7 +676,8 @@ function renderRadar() {
         radarRoutes.replaceChildren();
         return;
     }
-    radarImage.src = lower ? radar.lower : radar.upper;
+    const image = lower ? radar.lower : radar.upper;
+    if (radarImage.getAttribute("src") !== image) radarImage.src = image;
     radarImage.alt = `Radar de ${mapLabel(currentMatch.map)}`;
     if (showHeatmap) {
         radarSelection = undefined;
@@ -685,9 +687,11 @@ function renderRadar() {
     }
     const groups = radarGroupsForZoom(radar, point, lower);
     if (radarSelection) {
-        const selectedGroups = groups.filter(({ clips }) => clips.some((clip) => radarSelection.includes(clip)));
+        const selection = new Set(radarSelection);
+        const selectedGroups = groups.filter(({ clips }) => clips.some((clip) => selection.has(clip)));
         radarSelection = selectedGroups.length ? selectedGroups.flatMap(({ clips }) => clips) : undefined;
     }
+    const points = document.createDocumentFragment();
     for (const { left, top, clips } of groups) {
         const clip = clips[0];
         const marker = document.createElement("button");
@@ -714,8 +718,9 @@ function renderRadar() {
                 video.closest(".panel").scrollIntoView({ block: "start" });
             }
         });
-        markers.append(marker);
+        points.append(marker);
     }
+    markers.append(points);
     renderRadarLinks();
 }
 
@@ -734,8 +739,9 @@ async function markWatched(clip, badge) {
         await request("/api/clip-state", { ...clipReference(clip), watched: true });
     } catch (error) {
         clip.watched = false;
-        if (badge.isConnected) badge.hidden = true;
-        if (currentMatch?.clips.includes(clip) && (statusFilter === "unwatched" || !badge.isConnected)) {
+        const mountedBadge = clipRowAt(visible.indexOf(clip))?.querySelector(".watched-badge");
+        if (mountedBadge) mountedBadge.hidden = true;
+        if (currentMatch?.clips.includes(clip) && statusFilter === "unwatched") {
             renderClips(undefined, selected);
             syncAddress(true);
         }
@@ -744,13 +750,13 @@ async function markWatched(clip, badge) {
     }
     if (statusFilter === "unwatched" && filtered.includes(clip)) {
         const index = visible.indexOf(clip);
-        const wasFocused = document.activeElement === badge.closest(".clip-row");
+        const wasFocused = document.activeElement === clipRowAt(index);
         const scroll = list.scrollTop;
         renderClips(undefined, selected);
         syncAddress(true);
         list.scrollTop = scroll;
         if (wasFocused) {
-            const next = list.querySelectorAll(".clip-row")[Math.min(index, visible.length - 1)];
+            const next = showClipRow(Math.min(index, visible.length - 1));
             (next ?? unwatchedFilter).focus();
         }
     }
@@ -785,7 +791,7 @@ favoriteButton?.addEventListener("click", async () => {
             syncAddress(true);
             list.scrollTop = scroll;
         } else {
-            const row = list.children[visible.indexOf(clip)];
+            const row = clipRowAt(visible.indexOf(clip));
             const badge = row?.querySelector(".favorite-badge");
             if (badge) badge.hidden = !favorite;
         }
@@ -802,11 +808,13 @@ favoriteButton?.addEventListener("click", async () => {
 
 function renderClips(deletion, playingClip, preferred = selected) {
     const frequency = frequencySelect?.value;
+    const query = clipSearch?.value.trim().toLocaleLowerCase("fr");
     filtered = currentMatch.clips.filter((clip) => (filter === "all" || clip.kind === filter)
         && (!roundSelect.value || String(clip.round) === roundSelect.value)
         && (!frequency || throwFrequency(clip)?.category === frequency)
         && (statusFilter !== "favorites" || clip.favorite)
-        && (statusFilter !== "unwatched" || !clip.watched));
+        && (statusFilter !== "unwatched" || !clip.watched)
+        && (!query || calloutName(clip, currentMatch).toLocaleLowerCase("fr").includes(query)));
     renderRadar();
     const rows = radarSelection ?? filtered;
     if (deletion && selected === deletion.clip) {
@@ -823,18 +831,34 @@ function renderClips(deletion, playingClip, preferred = selected) {
 function renderClipList(preferred = selected, autoplay = false, playingClip) {
     visible = radarSelection ?? filtered;
     byId("count").textContent = `${visible.length} ${visible.length === 1 ? "lancer" : "lancers"}`;
+    const index = visible.indexOf(playingClip ?? preferred);
+    const page = index >= 0 ? Math.floor(index / CLIPS_PER_PAGE) : playingClip ? clipPage : 0;
+    renderClipPage(page);
+    selectClip(playingClip ?? (index >= 0 ? preferred : visible[0]), autoplay);
+}
+
+function renderClipPage(page) {
+    const pages = Math.max(1, Math.ceil(visible.length / CLIPS_PER_PAGE));
+    clipPage = Math.min(pages - 1, Math.max(0, page));
+    clipPages.hidden = pages === 1;
+    byId("clip-page-status").textContent = `Page ${clipPage + 1} sur ${pages}`;
+    previousPage.setAttribute("aria-disabled", String(clipPage === 0));
+    nextPage.setAttribute("aria-disabled", String(clipPage + 1 === pages));
+
     const fragment = document.createDocumentFragment();
-    if ((statusFilter || frequencySelect?.value) && !visible.length) {
+    if (!visible.length) {
         const empty = document.createElement("p");
         empty.textContent = "Aucun clip pour ces filtres.";
         if (statusFilter === "unwatched") empty.textContent = "Aucun clip à traiter pour ces filtres.";
         if (statusFilter === "favorites") empty.textContent = "Aucun favori pour ces filtres.";
         fragment.append(empty);
     }
-    visible.forEach((clip, index) => {
+    const start = clipPage * CLIPS_PER_PAGE;
+    visible.slice(start, start + CLIPS_PER_PAGE).forEach((clip, offset) => {
         const row = document.createElement("button");
         row.className = "clip-row";
-        row.dataset.index = index;
+        row.dataset.index = start + offset;
+        row.setAttribute("aria-pressed", String(clip === selected));
         row.style.setProperty("--tint", kinds[clip.kind].color);
         row.append(dot());
         const badge = clipStateEnabled ? document.createElement("small") : null;
@@ -885,10 +909,21 @@ function renderClipList(preferred = selected, autoplay = false, playingClip) {
     });
     list.replaceChildren(fragment);
     list.scrollTop = 0;
-    selectClip(playingClip ?? (visible.includes(preferred) ? preferred : visible[0]), autoplay);
+}
+
+for (const [button, direction] of [[previousPage, -1], [nextPage, 1]]) {
+    button.addEventListener("click", () => {
+        if (button.getAttribute("aria-disabled") === "false") renderClipPage(clipPage + direction);
+    });
 }
 
 function refreshCalloutLabels() {
+    if (clipSearch?.value.trim() && currentMatch) {
+        radarSelection = undefined;
+        renderClips();
+        syncAddress(true);
+        return;
+    }
     renderClipTitle(selected);
     for (const row of list.querySelectorAll(".clip-row")) {
         row.querySelector(".clip-callout").textContent = calloutName(visible[Number(row.dataset.index)], currentMatch);
@@ -1031,6 +1066,7 @@ function restoreLibraryAddress() {
     const exportId = params.get("export");
     const recent = exportId && catalogue.matches.find((match) => match.clips.some((clip) => clip.exportId === exportId));
     updateMapOptions(params.get("map") ?? recent?.map ?? sessionStorage.getItem("utilityMap"));
+    if (clipSearch) clipSearch.value = (params.get("q") ?? "").slice(0, 64);
     const type = params.get("type");
     filter = Object.hasOwn(kinds, type) ? type : "all";
     const status = params.get("status");
@@ -1039,7 +1075,6 @@ function restoreLibraryAddress() {
     if (frequencySelect) frequencySelect.value = Object.hasOwn(frequencyLabels, frequency) ? frequency : "";
     showStatusFilter();
     heatmapEnabled = params.get("heatmap") === "1";
-    setLibraryFullscreen(params.get("fullscreen") === "1");
     pointSelect.value = params.get("points") === "launch" ? "launch" : "impact";
     const round = params.get("round");
     switchMatch({
@@ -1075,18 +1110,20 @@ heatmapToggle.addEventListener("click", () => {
     renderClips();
     syncAddress();
 });
-fullscreenButton.addEventListener("click", () => {
-    setLibraryFullscreen(!fullscreenEnabled);
-    syncAddress();
-    fullscreenButton.focus();
-});
-
 if (library) {
-    fullscreenButton.hidden = false;
+    if (clipSearch) {
+        clipSearch.hidden = false;
+        clipSearch.addEventListener("input", () => {
+            if (!currentMatch) return;
+            radarSelection = undefined;
+            renderClips();
+            syncAddress(true);
+        });
+    }
     window.handleLibraryShortcut = handleLibraryShortcut;
     document.addEventListener("keydown", handleLibraryShortcut);
     document.body.classList.add("library-view");
-    document.querySelector("h1").textContent = "Vidéothèque";
+    document.querySelector("h1").textContent = "Votre prochain lancer décisif.";
     byId("match-label").textContent = "Carte";
     if (navigation) window.restoreLibraryAddress = restoreLibraryAddress;
     else window.addEventListener("popstate", restoreLibraryAddress);
@@ -1103,13 +1140,15 @@ matchSelect.addEventListener("change", () => {
     switchMatch();
     syncAddress();
 });
-let radarWidth = byId("radar").clientWidth;
-new ResizeObserver(([entry]) => {
-    const width = entry.contentRect.width;
-    if (width <= 0 || Math.abs(width - radarWidth) < 1) return;
-    radarWidth = width;
-    refreshRadarGrouping();
-}).observe(byId("radar"));
+const radarViewport = byId("radar");
+let resizeTimer;
+new ResizeObserver(() => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+        const width = radarViewport.clientWidth;
+        if (width > 0 && radarGroupingCache?.width !== width) refreshRadarGrouping();
+    }, 120);
+}).observe(radarViewport);
 roundSelect.addEventListener("change", () => {
     renderClips();
     syncAddress();

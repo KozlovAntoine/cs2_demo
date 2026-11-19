@@ -1,0 +1,177 @@
+/* Direction retenue : Tactique, palette Onyx, Amaranth, Tomato, Tuscan Sun et Pacific Blue. */
+.theme-a {
+  font-family: "Bahnschrift", "Segoe UI", sans-serif;
+  --onyx: #0c090d;
+  --amaranth: #e01a4f;
+  --tomato: #f15946;
+  --tuscan: #f9c22e;
+  --pacific: #53b3cb;
+  --bg: var(--onyx);
+  --surface: #19121d;
+  --surface2: #281d2e;
+  --ink: #fff7fc;
+  --muted: #c8bbcb;
+  --edge: #503c58;
+  --accent: var(--tomato);
+  --accent-ink: var(--onyx);
+  --smoke: var(--pacific);
+  --flash: var(--tuscan);
+  --molo: var(--tomato);
+  --he: var(--amaranth);
+}
+.theme-a h1, .theme-a h2 { font-weight: 700; letter-spacing: -.025em; }
+.theme-a .sidebar nav a { font-size: 13px; }
+.theme-a .segmented button, .theme-a .filter-options button,
+.theme-a .filter-options select, .theme-a .heading-action button { font-size: 12px; }
+.theme-a .library-workspace .clip-card-title { font-size: 13px; }
+.theme-a .library-workspace .clip-card small { font-size: 11px; }
+.theme-a .library-workspace .frequency { font-size: 10px; }
+.theme-a .proto-bar { background: var(--onyx); border-color: var(--edge); }
+.theme-a .variant-switch .active { background: var(--surface2); border-color: var(--accent); color: var(--accent); }
+.theme-a .sidebar { background: var(--surface); }
+.theme-a .sidebar nav a.active { background: color-mix(in srgb, var(--accent) 13%, var(--surface)); }
+.theme-a .radar-image, .theme-a .video-wrap video { background: var(--onyx); border-color: var(--edge); }
+.theme-a .map-stage > img { opacity: 1; }
+.theme-a .map-pin { background: var(--pacific); border-color: var(--ink); color: var(--onyx); box-shadow: 0 0 0 4px #0c090d88; }
+.theme-a .map-pin.molo { background: var(--tomato); }
+.theme-a .map-pin.selected { background: var(--tuscan); border-color: var(--ink); box-shadow: 0 0 0 5px #f9c22e44; }
+.theme-a .route { stroke: var(--tuscan); }
+.theme-a .route circle { fill: var(--tuscan); }
+.theme-a .map-coordinates { color: var(--muted); }
+.theme-a .zoom { background: var(--surface); border-color: var(--edge); color: var(--pacific); }
+.theme-a .zoom button { color: inherit; }
+.theme-a .zone-polygon { fill: #53b3cb38; stroke: var(--pacific); }
+.theme-a .zone-polygon.secondary-zone { fill: #f1594640; stroke: var(--tomato); }
+.theme-a .zone-polygon.draft { fill: #f9c22e38; stroke: var(--tuscan); }
+.theme-a .vertices circle { fill: var(--tuscan); stroke: var(--onyx); }
+.theme-a .zone-color { background: var(--pacific); }
+.theme-a .color-1 { background: var(--tomato); }
+.theme-a .color-2 { background: var(--tuscan); }
+.theme-a .color-3 { background: var(--amaranth); }
+.theme-a .editor-map text { fill: var(--ink); stroke: var(--onyx); }
+.theme-a .message.success { color: var(--pacific); background: #53b3cb14; border-color: #53b3cb55; }
+.theme-a .message.warning { color: var(--tuscan); background: #f9c22e14; border-color: #f9c22e55; }
+.theme-a .message.error, .theme-a .danger { color: #ff9ab5; border-color: var(--amaranth); }
+.theme-a .message.error, .theme-a .danger:hover { background: #e01a4f22; }
+.theme-a .favorite { color: var(--tuscan); }
+.theme-a .throw-key { --accent: var(--tuscan); }
+.theme-a .swatches { flex-wrap: wrap; }
+
+.throw-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.throw-label { font-size: 11px; color: var(--muted); }
+.throw-key {
+  display: inline-grid;
+  place-items: center;
+  min-width: 30px;
+  min-height: 30px;
+  padding: 3px 7px;
+  border-color: var(--edge);
+  color: var(--ink);
+  font: 700 10px/1.2 "Segoe UI", sans-serif;
+}
+.mouse-icon {
+  display: flex;
+  width: 16px;
+  height: 20px;
+  border: 1px solid currentColor;
+  border-radius: 6px 6px 5px 5px;
+  overflow: hidden;
+}
+.mouse-icon::before, .mouse-icon::after {
+  content: "";
+  width: 50%;
+  height: 52%;
+  border-bottom: 1px solid currentColor;
+}
+.mouse-icon::before { border-right: 1px solid currentColor; }
+.mouse-left::before, .mouse-right::after,
+.mouse-middle::before, .mouse-middle::after { background: var(--accent); }
+.theme-b .mouse-icon { color: var(--ink); }
+
+/* Une vue de travail unique, avec la navigation conservée. */
+.tactical-library .shell { height: calc(100dvh - 50px); min-height: 0; }
+.tactical-library .sidebar { min-height: 0; }
+.tactical-library .sidebar-bottom { padding-top: 24px; }
+.tactical-library .main-shell { display: flex; flex-direction: column; min-height: 0; }
+.tactical-library .topbar { height: 52px; min-height: 52px; padding: 0 22px; }
+.tactical-library .page-library { flex: 1; display: flex; flex-direction: column; width: 100%; max-width: none; min-height: 0; margin: 0; padding: 18px 20px 12px; }
+.tactical-library .page-heading { flex: 0 0 auto; align-items: center; gap: 14px; margin-bottom: 14px; }
+.tactical-library .page-heading h1 { font-size: 26px; letter-spacing: -.9px; }
+.tactical-library .page-heading .eyebrow { display: none; }
+.tactical-library .page-heading p { margin-top: 6px; font-size: 10px; }
+.tactical-library .heading-action { max-width: none; }
+.tactical-library .library-summary { display: none; }
+.tactical-library .filterbar { flex: 0 0 auto; margin: 0 0 14px; gap: 10px; }
+.tactical-library .filter-options { gap: 6px; }
+.tactical-library .library-workspace { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); gap: 14px; align-items: stretch; }
+.tactical-library .library-workspace > .video-panel { grid-column: 1; grid-row: 1; display: flex; flex-direction: column; min-height: 0; }
+.tactical-library .video-panel > .panel-title { flex: 0 0 auto; padding: 14px 16px; }
+.tactical-library .video-panel .panel-title h2 { font-size: 19px; }
+.tactical-library .video-panel .panel-title .eyebrow { font-size: 8px; }
+.tactical-library .video-wrap { flex: 1; min-height: 0; display: flex; margin: 0; border-radius: 0; }
+.tactical-library .video-wrap video { height: 100%; width: 100%; aspect-ratio: auto; object-fit: contain; }
+.tactical-library .clip-info { flex: 0 0 auto; padding: 12px 16px 8px; }
+.tactical-library .clip-info strong { font-size: 11px; }
+.tactical-library .clip-info small { font-size: 9px; }
+.tactical-library .clip-actions { flex: 0 0 auto; padding: 0 16px 12px; }
+.tactical-library .tactical-inspector { display: flex; flex-direction: column; gap: 12px; min-width: 0; min-height: 0; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--edge) var(--surface); padding-right: 3px; }
+.tactical-library .tactical-inspector > * { flex: 0 0 auto; min-width: 0; }
+.tactical-library .tactical-inspector .radar-panel,
+.tactical-library .tactical-inspector .clips-panel { grid-column: auto; grid-row: auto; }
+.tactical-library .tactical-inspector .panel-title { padding: 12px; gap: 5px; }
+.tactical-library .tactical-inspector .panel-title h2 { font-size: 11px; }
+.tactical-library .tactical-inspector .panel-title > .muted { display: none; }
+.tactical-library .tactical-inspector .radar-tools { gap: 5px; margin: 0 10px 10px; flex-wrap: wrap; }
+.tactical-library .tactical-inspector .radar-tools label { gap: 5px; }
+.tactical-library .tactical-inspector .radar-tools select { padding: 5px; }
+.tactical-library .tactical-inspector .radar-tools button { padding: 5px; }
+.tactical-library .tactical-inspector .radar-image { margin: 0 8px; }
+.tactical-library .tactical-inspector .radar-caption { padding: 10px; flex-wrap: wrap; gap: 6px; font-size: 8px; }
+.tactical-library .tactical-inspector .radar-caption > span:last-child { display: none; }
+.tactical-library .library-workspace .clip-list { display: flex; flex-direction: column; padding: 5px; gap: 3px; }
+.tactical-library .library-workspace .clip-card { display: flex; flex-direction: row; flex-wrap: nowrap; align-items: center; gap: 8px; padding: 8px 5px; }
+.tactical-library .library-workspace .clip-thumb { width: 54px; }
+.tactical-library .library-workspace .clip-card-text { padding: 0; }
+.tactical-library .library-workspace .clip-card-title { line-height: 1.4; }
+.tactical-library .library-workspace .clip-card small { line-height: 1.4; }
+.tactical-library .library-workspace .clip-card small > span { display: none; }
+.tactical-library .library-workspace .clip-arrow { display: none; }
+.tactical-library .library-workspace .clip-tags { gap: 4px; flex-wrap: wrap; }
+.tactical-library .list-foot { padding: 10px; font-size: 8px; }
+.tactical-library .list-foot > span { display: none; }
+.tactical-library .tactical-inspector > .console { border: 1px solid var(--edge); border-radius: var(--radius); padding: 12px; align-items: flex-start; }
+.tactical-library .console code { font-size: 9px; line-height: 1.7; }
+.tactical-library .app-footer { flex: 0 0 auto; margin: 0 20px; padding: 10px 0; font-size: 7px; }
+
+@media (max-width: 1150px) and (min-width: 701px) {
+  .tactical-library .sidebar { width: 150px; padding: 24px 10px; }
+  .tactical-library .sidebar .brand { font-size: 13px; gap: 7px; }
+  .tactical-library .brand-sub { font-size: 6px; }
+  .tactical-library .sidebar nav a { font-size: 10px; padding: 10px 7px; gap: 7px; }
+  .tactical-library .filterbar { gap: 8px; }
+  .tactical-library .segmented button { padding: 6px 8px; }
+  .tactical-library .filter-options select,
+  .tactical-library .filter-options button { font-size: 9px; padding: 6px 7px; }
+  .tactical-library .library-workspace .clip-thumb { display: none; }
+}
+@media (max-width: 850px) and (min-width: 701px) {
+  .tactical-library .sidebar { display: none; }
+}
+@media (max-width: 700px) {
+  .tactical-library .shell { height: auto; min-height: calc(100dvh - 50px); }
+  .tactical-library .page-library { padding: 20px 14px; }
+  .tactical-library .page-heading { align-items: flex-start; flex-direction: column; gap: 16px; }
+  .tactical-library .heading-action { width: 100%; flex-wrap: wrap; }
+  .tactical-library .heading-action .map-choice { width: auto; margin-right: auto; }
+  .tactical-library .page-heading p { font-size: 10px; }
+  .tactical-library .library-workspace { display: flex; flex-direction: column; min-height: 0; }
+  .tactical-library .library-workspace > .video-panel { flex: 0 0 auto; order: 0; }
+  .tactical-library .video-wrap { flex: 0 0 auto; aspect-ratio: 16/9; }
+  .tactical-library .video-wrap video { aspect-ratio: 16/9; }
+  .tactical-library .tactical-inspector { order: 1; overflow: visible; }
+  .tactical-library .tactical-inspector .radar-caption > span:last-child { display: inline; }
+  .tactical-library .library-workspace .clip-thumb { width: 90px; }
+  .tactical-library .library-workspace .clip-card-title { font-size: 12px; }
+  .tactical-library .library-workspace .clip-card small { font-size: 10px; }
+  .tactical-library .library-workspace .frequency { font-size: 9px; }
+}

@@ -9,21 +9,34 @@
   <script defer src="/app.js"></script>
 </head>
 <body>
-  <header class="app-bar">
-    <div class="brand"><span class="logo" aria-hidden="true"></span>Utilitaires CS2</div>
-    <span id="working" role="status" hidden></span>
-    <button class="secondary" id="library-link" type="button">Vidéothèque</button>
-    <button class="secondary" id="back" type="button">Nouvel export</button>
-    <button class="quiet" id="quit" type="button">Quitter</button>
-  </header>
+  <aside class="app-sidebar">
+    <div class="brand"><strong>CS2</strong> UTILITIES</div>
+    <p class="nav-caption">Votre terrain de jeu</p>
+    <nav aria-label="Espace personnel">
+      <button id="library-link" type="button"><span aria-hidden="true">▦</span>Vidéothèque</button>
+      <button id="callouts-link" type="button"><span aria-hidden="true">◫</span>Callouts</button>
+      <button id="galleries-link" type="button"><span aria-hidden="true">▱</span>Galeries</button>
+      <button id="back" type="button"><span aria-hidden="true">↥</span>Importation</button>
+    </nav>
+    <div class="sidebar-footer"><span id="working" role="status" hidden></span><span class="local-label">● Application locale</span><button class="quiet" id="quit" type="button">Quitter</button></div>
+  </aside>
+  <div class="app-content">
+    <header class="app-bar">
+      <div class="breadcrumb"><span>Espace personnel</span><span aria-hidden="true">›</span><strong id="route-label">Vidéothèque</strong></div>
+      <button class="primary" id="route-action" type="button">↥ Importer .dem ou archive .rar</button>
+    </header>
   <main id="home" hidden>
-    <section class="panel generator" aria-labelledby="generate-title">
-      <h1 id="generate-title">Générer des clips</h1>
+    <div class="import-heading">
+      <h1 id="generate-title">De la démo au prochain déclic.</h1>
+      <p>Importez vos parties. Gardez les lancers qui font la différence.</p>
+    </div>
+    <section class="generator" aria-labelledby="generate-title">
       <form id="generate">
         <fieldset id="controls">
-          <div class="field">
-            <span class="label" id="source-label">Démos ou archives HLTV</span>
+          <section class="panel source-panel" aria-labelledby="source-label">
+            <h2 id="source-label">Vos démos</h2>
             <div class="selection">
+              <p class="source-instruction">Choisissez vos démos ou archives HLTV</p>
               <div class="source-name" aria-live="polite">
                 <span id="chosen">Aucun fichier sélectionné</span>
                 <span id="source-imported" class="imported-badge" hidden></span>
@@ -31,7 +44,9 @@
               <button class="secondary" id="choose" type="button" aria-describedby="source-label chosen">Parcourir…</button>
             </div>
             <ul id="source-files" class="source-files" aria-label="Fichiers sélectionnés" hidden></ul>
-          </div>
+          </section>
+          <section class="panel settings-panel" aria-labelledby="settings-title">
+          <h2 id="settings-title">Réglages de génération</h2>
           <label class="field" id="demo-field" hidden><span>Démo de l’archive</span><select id="demo"></select></label>
           <label class="field"><span>Utilitaire</span>
             <select id="kind">
@@ -48,22 +63,45 @@
               <input id="limit" type="number" min="1" step="1" placeholder="Tous">
             </label>
           </details>
-          <button class="primary" id="submit" type="submit" disabled>Générer les clips</button>
+          <button class="primary" id="submit" type="submit" disabled>Générer les clips →</button>
+          </section>
         </fieldset>
       </form>
       <p class="hint">Laisse Steam ouvert. CS2 se lance pour chaque démo et se ferme après sa dernière capture.</p>
-      <section class="status" id="status" hidden aria-labelledby="phase">
-        <div class="status-heading"><span id="spinner" aria-hidden="true"></span><h2 id="phase" aria-live="polite"></h2></div>
-        <p id="latest"></p>
-        <div id="job-controls" class="job-controls" hidden>
-          <button id="pause-job" class="secondary" type="button">Pause</button>
-          <button id="cancel-job" class="cancel-job" type="button">Annuler le traitement</button>
-          <p id="job-control-hint"></p>
-        </div>
-        <details id="log" hidden><summary>Journal</summary><ul id="messages"></ul></details>
-      </section>
       <p id="notification" class="error" role="alert" hidden></p>
     </section>
+      <section class="panel status" id="status" hidden aria-labelledby="queue-title">
+        <div class="queue-heading">
+          <h2 id="queue-title">File de traitement</h2>
+          <span id="queue-summary" hidden></span>
+        </div>
+        <div class="status-heading"><span id="spinner" aria-hidden="true"></span><h2 id="phase" aria-live="polite"></h2></div>
+        <p id="latest"></p>
+        <table id="queue-table" aria-labelledby="queue-title" hidden>
+          <thead><tr><th scope="col">Source</th><th scope="col">État</th><th scope="col">Clips</th><th scope="col">Progression</th><th scope="col">Actions</th></tr></thead>
+          <tbody id="queue-rows"></tbody>
+        </table>
+        <template id="queue-row-template">
+          <tr>
+            <th scope="row" class="queue-source"><strong></strong><small></small></th>
+            <td class="queue-state"><span></span></td>
+            <td class="queue-clips"><span></span><span></span></td>
+            <td class="queue-progress">
+              <div><progress max="100" value="0" aria-label="Progression"></progress><span></span></div>
+              <small></small>
+            </td>
+            <td class="queue-actions"><a hidden></a></td>
+          </tr>
+        </template>
+        <div id="legacy-job-actions">
+          <div id="job-controls" class="job-controls" hidden>
+            <button id="pause-job" class="secondary" type="button">Pause</button>
+            <button id="cancel-job" class="cancel-job" type="button">Annuler le traitement</button>
+          </div>
+        </div>
+        <p id="job-control-hint" hidden></p>
+        <details id="log" hidden><summary>Journal</summary><ul id="messages"></ul></details>
+      </section>
     <section class="panel history" aria-labelledby="history-title">
       <div class="history-heading"><h2 id="history-title">Galeries</h2><span id="gallery-count"></span></div>
       <p id="library-notice" class="hint" hidden>Pour ouvrir la vidéothèque, clique sur Quitter dès que le bouton est disponible, puis relance Utilitaires CS2. Les galeries terminées sont accessibles ci-dessous.</p>
@@ -75,5 +113,6 @@
     <iframe id="gallery" title="Radar et clips"></iframe>
   </section>
   <p class="closed" id="closed" hidden>L’application est fermée. Relance-la depuis le Bureau.</p>
+  </div>
 </body>
 </html>

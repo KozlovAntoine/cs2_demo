@@ -1,6 +1,9 @@
 import json
+import os
 import re
+import stat
 from contextlib import suppress
+from functools import lru_cache
 from pathlib import Path
 from urllib.parse import quote
 from uuid import uuid4
@@ -14,6 +17,7 @@ EXPORT_NAME = re.compile(r"[\w-]+")
 CLIP_NAME = re.compile(r"[\w-]+\.mp4")
 CLIP_VIDEO = re.compile(r"clips/[\w-]+\.mp4")
 CLIP_FLAGS = ("favorite", "watched")
+THROW_USAGE_PREFIX = ".throw-usage-"
 
 
 def export_url(folder):
@@ -27,11 +31,11 @@ def read_catalogue(manifest):
     return json.loads(source[len(CATALOGUE_PREFIX):].removesuffix(";"))
 
 
-def completed_catalogues(output):
+def published_catalogues(output, *, completed_only=False):
     for manifest in output.glob("*/catalogue.js"):
         folder = manifest.parent
         try:
-            if (folder.resolve() != folder or (folder / "work").exists()
+            if (folder.resolve() != folder or (completed_only and (folder / "work").exists())
                     or not (folder / "index.html").is_file() or manifest.resolve() != manifest):
                 continue
             catalogue = read_catalogue(manifest)
@@ -47,15 +51,21 @@ def published_clips(match):
 
 
 def playable_matches(folder, catalogue):
+    try:
+        with os.scandir(folder / "clips") as entries:
+            videos = {os.path.normcase(entry.name) for entry in entries if entry.is_file()}
+    except (FileNotFoundError, NotADirectoryError):
+        return
     for match in catalogue["matches"]:
-        clips = [clip for clip in published_clips(match) if (folder / clip["video"]).is_file()]
+        clips = [clip for clip in published_clips(match)
+                 if os.path.normcase(clip["video"].removeprefix("clips/")) in videos]
         if clips:
             yield {**match, "clips": clips}
 
 
 def existing_galleries(output):
     galleries = []
-    for folder, date, data in completed_catalogues(output):
+    for folder, date, data in published_catalogues(output):
         matches = list(playable_matches(folder, data))
         if matches:
             count = sum(len(match["clips"]) for match in matches)
@@ -77,18 +87,57 @@ def read_clip_states(folder):
 
 
 def throw_usage_path(folder, filename):
-    return folder / f".throw-usage-{filename}.json"
+    return folder / f"{THROW_USAGE_PREFIX}{filename}.json"
+
+
+def load_throw_usage(path):
+    with open(path, encoding="utf-8") as source:
+        counts = json.load(source)
+    if isinstance(counts, dict):
+        return {demo: count for demo, count in counts.items() if type(count) is int and count > 0}
+    return {}
 
 
 def read_throw_usage(path):
     try:
         if path.resolve() == path:
-            counts = json.loads(path.read_text(encoding="utf-8"))
-            if isinstance(counts, dict):
-                return {demo: count for demo, count in counts.items() if type(count) is int and count > 0}
+            return load_throw_usage(path)
     except (OSError, ValueError):
         pass
     return {}
+
+
+@lru_cache(maxsize=16384)
+def cached_throw_usage_summary(path, _version):
+    counts = load_throw_usage(path)
+    return sum(counts.values()), len(counts)
+
+
+def throw_usage_summaries(folder):
+    summaries = {}
+    with os.scandir(folder) as entries:
+        for entry in entries:
+            name = os.path.normcase(entry.name)
+            if not (name.startswith(THROW_USAGE_PREFIX) and name.endswith(".json")):
+                continue
+            try:
+                info = entry.stat(follow_symlinks=False)
+                reparse = getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
+                if stat.S_ISLNK(info.st_mode) or reparse:
+                    counts = read_throw_usage(Path(entry.path))
+                    total, demos = sum(counts.values()), len(counts)
+                elif stat.S_ISREG(info.st_mode):
+                    # Exporters replace usage files atomically. Reuse counts only for the same file version.
+                    version = (info.st_mtime_ns, info.st_ctime_ns, info.st_size)
+                    total, demos = cached_throw_usage_summary(entry.path, version)
+                else:
+                    continue
+            except (OSError, ValueError):
+                continue
+            if demos:
+                filename = name.removeprefix(THROW_USAGE_PREFIX).removesuffix(".json")
+                summaries[filename] = {"total": total, "demos": demos}
+    return summaries
 
 
 def record_throw_usage(folder, filename, demo, count):
@@ -114,7 +163,7 @@ def throw_references(output, map_name):
     radar = None
     clips = []
     removed = []
-    for folder, _, data in sorted(completed_catalogues(output), key=lambda item: item[1], reverse=True):
+    for folder, _, data in sorted(published_catalogues(output, completed_only=True), key=lambda item: item[1], reverse=True):
         for match in data["matches"]:
             if match["map"] != map_name:
                 continue
@@ -127,17 +176,21 @@ def throw_references(output, map_name):
 
 def library_catalogue(output):
     maps = {}
-    for folder, _, data in sorted(completed_catalogues(output), key=lambda item: item[1], reverse=True):
+    for folder, _, data in sorted(published_catalogues(output), key=lambda item: item[1], reverse=True):
         base = export_url(folder)
         states = read_clip_states(folder)
+        try:
+            summaries = throw_usage_summaries(folder)
+        except OSError:
+            summaries = {}
         for match in playable_matches(folder, data):
             clips = []
             for clip in match["clips"]:
                 video = clip["video"]
-                filename = Path(video).name
+                filename = video.removeprefix("clips/")
                 state = states.get(filename, {})
-                counts = read_throw_usage(throw_usage_path(folder, filename))
-                usage = {"usage": {"total": sum(counts.values()), "demos": len(counts)}} if counts else {}
+                summary = summaries.get(os.path.normcase(filename))
+                usage = {"usage": summary} if summary else {}
                 clips.append({**clip, **usage, "video": f"{base}/{video}", "file": filename,
                               "exportId": folder.name, "source": match["demo"],
                               "calloutOverride": state.get("calloutOverride"),
@@ -160,7 +213,7 @@ def clip_paths(output, export_id, filename):
     manifest = folder / "catalogue.js"
     clip_file = folder / "clips" / filename
     if (folder.resolve() != folder or manifest.resolve() != manifest or clip_file.resolve() != clip_file
-            or not manifest.is_file() or (folder / "work").exists()):
+            or not manifest.is_file()):
         raise ValueError("Ce clip n’est pas référencé dans la vidéothèque.")
     return manifest, clip_file
 
@@ -204,6 +257,9 @@ def set_clip_state(output, export_id, filename, data):
 def delete_clip(output, export_id, filename):
     manifest, clip_file = clip_paths(output, export_id, filename)
     folder = manifest.parent
+    # An active export can replace the manifest when it publishes the next demo.
+    if (folder / "work").exists():
+        raise ValueError("Attends la fin de cet export pour supprimer ce clip.")
 
     catalogue = read_catalogue(manifest)
     original = manifest.read_bytes()
