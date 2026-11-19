@@ -29,6 +29,23 @@ const frequencySelect = byId("frequency");
 const pointSelect = byId("point");
 const levelSelect = byId("level");
 const video = byId("video");
+const skipIntroButton = byId("skip-intro");
+let skipIntro = false;
+try {
+    skipIntro = localStorage.getItem("utilitySkipIntro") === "true";
+} catch {
+    // The setting remains available for this page when storage is unavailable.
+}
+skipIntroButton.setAttribute("aria-pressed", String(skipIntro));
+skipIntroButton.addEventListener("click", () => {
+    skipIntro = !skipIntro;
+    skipIntroButton.setAttribute("aria-pressed", String(skipIntro));
+    try {
+        localStorage.setItem("utilitySkipIntro", String(skipIntro));
+    } catch {
+        // Keep the setting for the current page.
+    }
+});
 const detail = byId("video-empty");
 const radarImage = byId("radar-image");
 const markers = byId("points");
@@ -371,7 +388,10 @@ function selectClip(clip, autoplay = false) {
         video.removeAttribute("src");
         video.hidden = !clip?.video;
         detail.hidden = Boolean(clip?.video);
-        if (clip?.video) video.src = clip.video;
+        if (clip?.video) {
+            video.src = clip.video;
+            if (skipIntro) video.currentTime = 2;
+        }
         renderClipTitle(clip);
         if (!clip) {
             detail.textContent = "Aucun clip pour ce filtre.";
