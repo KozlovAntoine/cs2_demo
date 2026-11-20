@@ -40,10 +40,84 @@
         <div class="player-radar">
           <img id="player-radar-image" alt="" draggable="false">
           <canvas id="player-heatmap" width="512" height="512" aria-hidden="true"></canvas>
+          <button id="player-arrival-picker" class="player-arrival-picker" type="button"
+            aria-label="Choisir un point sur le radar pour le premier passage. Utilisez les flèches au clavier." disabled></button>
+          <div id="player-arrival-marker" class="player-arrival-marker" aria-hidden="true" hidden></div>
+          <div id="player-arrival" class="player-arrival" hidden>
+            <p class="player-message">Premier passage</p>
+            <div class="player-arrival-row">
+              <span id="player-arrival-side-ct" class="player-arrival-side player-counter-terrorists">CT</span>
+              <output id="player-arrival-value-ct" aria-labelledby="player-arrival-side-ct"></output>
+              <button id="player-arrival-copy-ct" class="zone-button" type="button" aria-label="Copier le chrono CT">Copier</button>
+            </div>
+            <div class="player-arrival-row">
+              <span id="player-arrival-side-t" class="player-arrival-side player-terrorists">T</span>
+              <output id="player-arrival-value-t" aria-labelledby="player-arrival-side-t"></output>
+              <button id="player-arrival-copy-t" class="zone-button" type="button" aria-label="Copier le chrono T">Copier</button>
+            </div>
+          </div>
           <p id="player-map-status" class="player-map-status" hidden></p>
         </div>
       </section>
+      <aside class="panel player-help" aria-labelledby="player-help-title">
+        <h2 id="player-help-title">Aide</h2>
+        <table>
+          <thead>
+            <tr><th scope="col">Utilitaire</th><th scope="col">Activation</th><th scope="col">Durée</th></tr>
+          </thead>
+          <tbody>
+            <tr><th scope="row">Grenade HE</th><td>≈ 1,6&nbsp;s</td><td>Instantanée</td></tr>
+            <tr><th scope="row">Flash</th><td>≈ 1,6&nbsp;s</td><td>Jusqu’à 5,3&nbsp;s</td></tr>
+            <tr><th scope="row">Smoke</th><td>À l’arrêt</td><td>≈ 22&nbsp;s</td></tr>
+            <tr>
+              <th scope="row">Molotov / incendiaire</th>
+              <td>Au sol<br>En vol vers 2&nbsp;s</td>
+              <td>T ≈ 7&nbsp;s<br>CT ≈ 5,5&nbsp;s</td>
+            </tr>
+          </tbody>
+        </table>
+      </aside>
+      <section class="panel player-note" aria-labelledby="player-note-title">
+        <h2 id="player-note-title">Note</h2>
+        <form id="player-note-form" autocomplete="off">
+          <div class="player-note-timings">
+            <section class="player-note-team player-terrorists" aria-labelledby="player-note-t-title">
+              <div class="player-note-team-heading">
+                <h3 id="player-note-t-title">T</h3>
+                <button id="player-note-add-t" class="zone-button" type="button" aria-label="Ajouter une ligne T">Ajouter</button>
+              </div>
+              <table aria-labelledby="player-note-t-title">
+                <thead><tr><th scope="col">Zone</th><th scope="col">mm:ss</th><th scope="col" aria-label="Actions"></th></tr></thead>
+                <tbody id="player-note-rows-t"></tbody>
+              </table>
+            </section>
+            <section class="player-note-team player-counter-terrorists" aria-labelledby="player-note-ct-title">
+              <div class="player-note-team-heading">
+                <h3 id="player-note-ct-title">CT</h3>
+                <button id="player-note-add-ct" class="zone-button" type="button" aria-label="Ajouter une ligne CT">Ajouter</button>
+              </div>
+              <table aria-labelledby="player-note-ct-title">
+                <thead><tr><th scope="col">Zone</th><th scope="col">mm:ss</th><th scope="col" aria-label="Actions"></th></tr></thead>
+                <tbody id="player-note-rows-ct"></tbody>
+              </table>
+            </section>
+          </div>
+          <textarea id="player-note-text" rows="4" aria-labelledby="player-note-title"></textarea>
+          <div class="zone-actions">
+            <button id="player-note-save" class="zone-button zone-save" type="submit" disabled>Enregistrer</button>
+            <button id="player-note-cancel" class="zone-button" type="button" disabled>Annuler</button>
+          </div>
+        </form>
+        <p id="player-note-status" class="player-message" role="status"></p>
+      </section>
     </div>
+    <template id="player-note-row">
+      <tr>
+        <td><input type="text" aria-label="Zone"></td>
+        <td><input type="text" aria-label="Temps" placeholder="mm:ss"></td>
+        <td><button class="zone-button player-note-remove" type="button" aria-label="Supprimer la ligne">×</button></td>
+      </tr>
+    </template>
   </main>
 </body>
 </html>

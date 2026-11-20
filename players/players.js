@@ -2,6 +2,8 @@
 
 const PLAYER_HEATMAP_WINDOW_SECONDS = 0.5;
 const PLAYER_HEATMAP_RADIUS = 7;
+const ARRIVAL_ARROW_DIRECTIONS = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+const EMPTY_NOTE = JSON.stringify({ text: "", t: [], ct: [] });
 const byId = (id) => document.getElementById(id);
 const mapSelect = byId("player-map");
 const roundSelect = byId("player-round");
@@ -13,6 +15,22 @@ const canvas = byId("player-heatmap");
 const context = canvas.getContext("2d");
 const mapStatus = byId("player-map-status");
 const coverage = byId("player-coverage");
+const arrivalPicker = byId("player-arrival-picker");
+const arrivalMarker = byId("player-arrival-marker");
+const arrivalPanel = byId("player-arrival");
+const arrivalRows = {
+    ct: { value: byId("player-arrival-value-ct"), copy: byId("player-arrival-copy-ct") },
+    t: { value: byId("player-arrival-value-t"), copy: byId("player-arrival-copy-t") },
+};
+const firstFramesByFloor = new Map();
+const noteForm = byId("player-note-form");
+const noteInput = byId("player-note-text");
+const noteSave = byId("player-note-save");
+const noteCancel = byId("player-note-cancel");
+const noteStatus = byId("player-note-status");
+const noteRowTemplate = byId("player-note-row");
+const noteRows = { t: byId("player-note-rows-t"), ct: byId("player-note-rows-ct") };
+const noteDrafts = new Map();
 const navigation = window.parent !== window ? window.parent.utilityNavigation : undefined;
 const accents = getComputedStyle(document.documentElement);
 const colors = ["t", "ct"].map((side) =>
@@ -34,10 +52,81 @@ let activeRequest;
 let playbackFrame;
 let densities;
 let image;
+let savedNote = EMPTY_NOTE;
+let arrivalPoint;
 
 function mapLabel(name) {
     const short = name.replace(/^(de|cs|ar)_/, "").replaceAll("_", " ");
     return short.charAt(0).toUpperCase() + short.slice(1);
+}
+
+function noteKey() {
+    return `utilityPlayerNoteData:${selectedMap.map}`;
+}
+
+function legacyNoteKey() {
+    return `utilityPlayerNote:${selectedMap.map}`;
+}
+
+function updateNoteDraft() {
+    const note = { text: noteInput.value };
+    for (const [side, rows] of Object.entries(noteRows)) {
+        note[side] = Array.from(rows.rows, (row) => {
+            const [zone, time] = row.querySelectorAll("input");
+            return { zone: zone.value, time: time.value };
+        });
+    }
+    const draft = JSON.stringify(note);
+    const changed = draft !== savedNote;
+    noteSave.disabled = noteCancel.disabled = !changed;
+    if (changed) noteDrafts.set(selectedMap.map, draft);
+    else noteDrafts.delete(selectedMap.map);
+}
+
+function createNoteRow(side, entry) {
+    const row = noteRowTemplate.content.firstElementChild.cloneNode(true);
+    const [zone, time] = row.querySelectorAll("input");
+    zone.value = entry?.zone ?? "";
+    time.value = entry?.time ?? "";
+    row.querySelector("button").addEventListener("click", () => {
+        const adjacent = row.nextElementSibling ?? row.previousElementSibling;
+        row.remove();
+        (adjacent?.querySelector("input") ?? byId(`player-note-add-${side}`)).focus();
+        noteStatus.textContent = "";
+        updateNoteDraft();
+    });
+    return row;
+}
+
+function showNote(snapshot) {
+    const note = JSON.parse(snapshot);
+    noteInput.value = note.text;
+    for (const [side, rows] of Object.entries(noteRows)) {
+        const fragment = document.createDocumentFragment();
+        for (const entry of note[side]) fragment.append(createNoteRow(side, entry));
+        rows.replaceChildren(fragment);
+    }
+    updateNoteDraft();
+}
+
+function loadNote() {
+    noteStatus.textContent = "";
+    try {
+        const stored = localStorage.getItem(noteKey());
+        if (stored === null) {
+            savedNote = JSON.stringify({ text: localStorage.getItem(legacyNoteKey()) ?? "", t: [], ct: [] });
+        } else {
+            const { text, t, ct } = JSON.parse(stored);
+            if (typeof text !== "string" || !Array.isArray(t) || !Array.isArray(ct)) {
+                throw new Error("Note invalide");
+            }
+            savedNote = JSON.stringify({ text, t, ct });
+        }
+    } catch {
+        savedNote = EMPTY_NOTE;
+        noteStatus.textContent = "Impossible de lire la note enregistrée.";
+    }
+    showNote(noteDrafts.get(selectedMap.map) ?? savedNote);
 }
 
 function timeLabel(deciseconds, fractional = false) {
@@ -61,6 +150,61 @@ function syncAddress(replace = false) {
 function showMapStatus(message = "") {
     if (mapStatus.textContent !== message) mapStatus.textContent = message;
     mapStatus.hidden = !message;
+}
+
+function clearArrival() {
+    arrivalPoint = undefined;
+    arrivalMarker.hidden = arrivalPanel.hidden = true;
+}
+
+function firstFrames(level) {
+    if (!firstFramesByFloor.has(level)) {
+        const { size, floors } = heatmap;
+        const index = ["t", "ct"].map((side) => {
+            const byPixel = new Uint32Array(size ** 2);
+            floors[level][side].forEach((positions, frame) => {
+                for (const pixel of positions) {
+                    // Store frame + 1 so zero can mean the pixel has never been visited.
+                    if (!byPixel[pixel]) byPixel[pixel] = frame + 1;
+                }
+            });
+            return byPixel;
+        });
+        firstFramesByFloor.set(level, index);
+    }
+    return firstFramesByFloor.get(level);
+}
+
+function showArrival(x, y) {
+    const { size, duration, samplesPerSecond } = heatmap;
+    x = Math.max(0, Math.min(size - 1, x));
+    y = Math.max(0, Math.min(size - 1, y));
+    arrivalPoint = { x, y };
+    const [t, ct] = firstFrames(floorSelect.value);
+    let firstT = Infinity;
+    let firstCt = Infinity;
+    for (const [dx, dy] of kernel) {
+        const px = x + dx;
+        const py = y + dy;
+        if (px < 0 || px >= size || py < 0 || py >= size) continue;
+        const pixel = py * size + px;
+        if (t[pixel]) firstT = Math.min(firstT, t[pixel]);
+        if (ct[pixel]) firstCt = Math.min(firstCt, ct[pixel]);
+    }
+    for (const [side, first] of Object.entries({ ct: firstCt, t: firstT })) {
+        const { value, copy } = arrivalRows[side];
+        const hasArrival = Number.isFinite(first);
+        value.textContent = hasArrival
+            ? timeLabel(Math.round((duration - (first - 1) / samplesPerSecond) * 10))
+            : "—";
+        value.title = hasArrival ? "" : "Aucun passage";
+        copy.hidden = !hasArrival;
+        copy.textContent = "Copier";
+    }
+    arrivalMarker.style.left = `${(x + 0.5) / size * 100}%`;
+    arrivalMarker.style.top = `${(y + 0.5) / size * 100}%`;
+    arrivalMarker.style.width = `${2 * PLAYER_HEATMAP_RADIUS / size * 100}%`;
+    arrivalMarker.hidden = arrivalPanel.hidden = false;
 }
 
 function drawHeatmap() {
@@ -125,7 +269,10 @@ function stopPlayback() {
 function showRadar() {
     const path = selectedMap.radar[floorSelect.value];
     radarImage.alt = `Radar de ${mapLabel(selectedMap.map)}`;
-    if (radarImage.getAttribute("src") !== path) radarImage.src = path;
+    if (radarImage.getAttribute("src") !== path) {
+        clearArrival();
+        radarImage.src = path;
+    }
     drawHeatmap();
 }
 
@@ -148,9 +295,11 @@ async function loadPositions() {
     const request = new AbortController();
     activeRequest = request;
     heatmap = undefined;
+    clearArrival();
+    firstFramesByFloor.clear();
     context.clearRect(0, 0, canvas.width, canvas.height);
     coverage.textContent = "";
-    timeControl.disabled = playButton.disabled = true;
+    timeControl.disabled = playButton.disabled = arrivalPicker.disabled = true;
     showMapStatus("Chargement des positions…");
     showRadar();
     try {
@@ -163,7 +312,7 @@ async function loadPositions() {
         image = context.createImageData(result.size, result.size);
         timeControl.max = result.duration * 10;
         byId("player-duration").textContent = timeLabel(result.duration * 10);
-        timeControl.disabled = playButton.disabled = !result.rounds;
+        timeControl.disabled = playButton.disabled = arrivalPicker.disabled = !result.rounds;
         coverage.textContent = `${result.rounds} ${result.rounds === 1 ? "round" : "rounds"} · ${result.demos} ${result.demos === 1 ? "démo" : "démos"}`;
         drawHeatmap();
     } catch (error) {
@@ -174,7 +323,9 @@ async function loadPositions() {
 }
 
 function selectMap(map, round, floor, time) {
+    const mapChanged = selectedMap?.map !== map.map;
     selectedMap = map;
+    if (mapChanged) loadNote();
     mapSelect.value = map.map;
     roundSelect.replaceChildren(new Option("Rounds 1 à 12", ""),
         ...map.rounds.map((number) => new Option(`Round ${number}`, number)));
@@ -193,6 +344,42 @@ function restorePlayerAddress() {
     syncAddress(true);
 }
 
+for (const [side, rows] of Object.entries(noteRows)) {
+    byId(`player-note-add-${side}`).addEventListener("click", () => {
+        const row = createNoteRow(side);
+        rows.append(row);
+        row.querySelector("input").focus();
+        noteStatus.textContent = "";
+        updateNoteDraft();
+    });
+}
+noteForm.addEventListener("input", () => {
+    noteStatus.textContent = "";
+    updateNoteDraft();
+});
+noteForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (noteSave.disabled) return;
+    try {
+        const draft = noteDrafts.get(selectedMap.map);
+        localStorage.setItem(noteKey(), draft);
+        savedNote = draft;
+        updateNoteDraft();
+        noteStatus.textContent = "Note enregistrée.";
+    } catch {
+        noteStatus.textContent = "Impossible d’enregistrer la note.";
+    }
+});
+noteCancel.addEventListener("click", () => {
+    showNote(savedNote);
+    noteStatus.textContent = "Modifications annulées.";
+});
+window.addEventListener("storage", (event) => {
+    if (selectedMap && [noteKey(), legacyNoteKey(), null].includes(event.key) && event.storageArea === localStorage) {
+        loadNote();
+    }
+});
+
 mapSelect.addEventListener("change", () => {
     selectMap(maps.find(({ map }) => map === mapSelect.value), "", "upper", 0);
     syncAddress();
@@ -205,6 +392,38 @@ floorSelect.addEventListener("change", () => {
     showRadar();
     syncAddress();
 });
+arrivalPicker.addEventListener("click", (event) => {
+    const { size } = heatmap;
+    if (!event.detail) {
+        const center = Math.floor(size / 2);
+        showArrival(arrivalPoint?.x ?? center, arrivalPoint?.y ?? center);
+        return;
+    }
+    const bounds = arrivalPicker.getBoundingClientRect();
+    showArrival(Math.floor((event.clientX - bounds.left) / bounds.width * size),
+        Math.floor((event.clientY - bounds.top) / bounds.height * size));
+});
+arrivalPicker.addEventListener("keydown", (event) => {
+    const direction = ARRIVAL_ARROW_DIRECTIONS[event.key];
+    if (!direction) return;
+    event.preventDefault();
+    const center = Math.floor(heatmap.size / 2);
+    const [dx, dy] = direction;
+    showArrival((arrivalPoint?.x ?? center) + dx * PLAYER_HEATMAP_RADIUS,
+        (arrivalPoint?.y ?? center) + dy * PLAYER_HEATMAP_RADIUS);
+});
+for (const { value, copy } of Object.values(arrivalRows)) {
+    copy.addEventListener("click", async () => {
+        if (!arrivalPoint || copy.hidden) return;
+        const point = arrivalPoint;
+        try {
+            await navigator.clipboard.writeText(value.textContent);
+            if (arrivalPoint === point) copy.textContent = "Copié";
+        } catch {
+            if (arrivalPoint === point) copy.textContent = "Réessayer";
+        }
+    });
+}
 timeControl.addEventListener("input", () => {
     stopPlayback();
     drawHeatmap();
