@@ -24,9 +24,10 @@ from job_control import JobCancelled, JobControl, job_checkpoint
 from job_log import bind_job_log, create_job_log, current_job_log
 from clip_library import (
     CATALOGUE_PREFIX, clip_paths, delete_clip, existing_galleries, export_url, find_library_clip, library_catalogue,
-    playable_matches, read_catalogue, set_clip_state,
+    playable_matches, published_catalogues, read_catalogue, set_clip_state,
 )
 from portrait_video import existing_portrait, generate_portrait, portrait_folder
+from round_replay import FIRST_HALF_ROUNDS, player_heatmap, replay_index
 from utility_video import (
     CALIBRATION, ROOT, find_csdm, generate, generate_export, inspect_demo_source, radar_layout, reserve_export, run,
 )
@@ -36,6 +37,7 @@ APP_ID = "cs2-utility-videos"
 STATIC = {"/": "index.html", "/app.css": "app.css", "/app.js": "app.js", "/utility.ico": "utility.ico"}
 GALLERY_ASSETS = {"index.html", "gallery.css", "gallery.js", "callouts.js", "InterVariable.woff2", "Inter-OFL.txt"}
 GALLERY_FILES = GALLERY_ASSETS | {"catalogue.js"}
+PLAYER_ASSETS = {"index.html", "players.css", "players.js"}
 CONTENT_POLICY = ("default-src 'self'; style-src 'self' 'unsafe-inline'; frame-ancestors 'self'; "
                   "object-src 'none'; base-uri 'none'; form-action 'self'")
 QUEUE_FINISHED = {"complete", "partial", "skipped", "cancelled", "error"}
@@ -106,6 +108,32 @@ class App:
                     if radar[floor]:
                         radar[floor] = f"/callout-radars/{radar[floor].name}"
                 maps.append({"map": name, "radar": radar, "zones": read_zones(self.output, name)})
+        return maps
+
+    def player_maps(self):
+        maps = {}
+        missing = {}
+        installation = self.radar_installation()
+        for name, records in replay_index(self.output).items():
+            radar = radar_layout(name, installation)
+            if radar:
+                for level in ("upper", "lower"):
+                    if radar[level]:
+                        radar[level] = f"/callout-radars/{radar[level].name}"
+                maps[name] = (records, radar)
+            else:
+                missing[name] = records
+        if missing:
+            for folder, _, catalogue in published_catalogues(self.output):
+                for match in catalogue["matches"]:
+                    name = match["map"]
+                    radar = match.get("radar")
+                    if name in missing and radar:
+                        base = export_url(folder)
+                        maps[name] = (missing.pop(name), {**radar, "upper": f"{base}/{radar['upper']}",
+                                                        "lower": f"{base}/{radar['lower']}" if radar.get("lower") else None})
+                if not missing:
+                    break
         return maps
 
     def select(self):
@@ -399,8 +427,9 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         super().end_headers()
 
-    def json_response(self, data, status=HTTPStatus.OK):
-        self.send_bytes(json.dumps(data, ensure_ascii=False).encode("utf-8"), "application/json", status)
+    def json_response(self, data, status=HTTPStatus.OK, *, allow_gzip=False):
+        body = json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        self.send_bytes(body, "application/json", status, allow_gzip=allow_gzip)
 
     def send_bytes(self, body, content_type, status=HTTPStatus.OK, *, allow_gzip=False):
         compress = False
@@ -455,6 +484,23 @@ class Handler(BaseHTTPRequestHandler):
                 self.json_response({"maps": maps})
             except (ValueError, OSError) as error:
                 self.json_response({"error": error_message(error)}, HTTPStatus.BAD_REQUEST)
+        elif path == "/api/player-heatmap/maps":
+            maps = [{"map": name, "radar": radar, "rounds": sorted({number for rounds in records.values() for number in rounds})}
+                    for name, (records, radar) in sorted(app.player_maps().items())]
+            self.json_response({"maps": maps})
+        elif path == "/api/player-heatmap/positions":
+            params = parse_qs(url.query)
+            name = params.get("map", [""])[0]
+            number = params.get("round", ["0"])[0]
+            try:
+                if not re.fullmatch(r"[0-9]{1,2}", number) or int(number) > FIRST_HALF_ROUNDS:
+                    raise ValueError("Choisis un round entre 1 et 12.")
+                if not (match := app.player_maps().get(name)):
+                    raise ValueError("Aucune position de joueur disponible pour cette carte.")
+                records, radar = match
+                self.json_response(player_heatmap(records, radar, int(number)), allow_gzip=True)
+            except (ValueError, OSError) as error:
+                self.json_response({"error": error_message(error)}, HTTPStatus.BAD_REQUEST)
         elif path == "/api/portrait":
             data = {key: values[0] for key, values in parse_qs(url.query).items()}
             try:
@@ -478,6 +524,8 @@ class Handler(BaseHTTPRequestHandler):
             file = (ROOT / "app" / STATIC[path]) if path in STATIC else self.gallery_file(path)
             if path.startswith("/library/") and path.removeprefix("/library/") in GALLERY_ASSETS:
                 file = ROOT / "gallery" / path.removeprefix("/library/")
+            elif path.startswith("/players/") and path.removeprefix("/players/") in PLAYER_ASSETS:
+                file = ROOT / "players" / path.removeprefix("/players/")
             elif path.startswith("/callout-radars/"):
                 filename = path.removeprefix("/callout-radars/")
                 name = filename.removesuffix(".png").removesuffix("_lower")

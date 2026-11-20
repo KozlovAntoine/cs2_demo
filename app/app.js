@@ -17,6 +17,7 @@ let picking = false;
 let closed = false;
 let galleryPath;
 let lastLibrarySearch = "";
+let lastPlayerSearch = "view=players";
 let openCalloutsAfterLoad = false;
 const ESTIMATED_SECONDS_PER_CLIP = 13;
 let estimatedJobId;
@@ -291,6 +292,7 @@ for (const id of ["pause-job", "cancel-job"]) {
 
 function route() {
     const params = new URLSearchParams(location.search);
+    if (params.get("view") === "players") return "/players/index.html";
     const galleryId = params.get("gallery");
     const exportPath = galleryId && /^[\w-]+$/.test(galleryId) ? `/exports/${galleryId}/index.html` : null;
     if (["export", "galleries"].includes(params.get("view")) || (!exportPath && libraryAvailable === false)) return null;
@@ -308,7 +310,16 @@ function setAddress(search, replace = false) {
 window.utilityNavigation = {
     search: () => location.search,
     update(search, replace) {
-        if (route() !== "/library/index.html" || closed) return;
+        if (closed) return;
+        const path = route();
+        if (path === "/players/index.html") {
+            const params = new URLSearchParams(search);
+            params.set("view", "players");
+            lastPlayerSearch = params.toString();
+            setAddress(lastPlayerSearch, replace);
+            return;
+        }
+        if (path !== "/library/index.html") return;
         lastLibrarySearch = search;
         setAddress(search, replace);
         updateNavigation("library");
@@ -324,18 +335,24 @@ function renderRoute(focus = false, refresh = false) {
         return;
     }
     const library = path.startsWith("/library/");
+    const players = path === "/players/index.html";
     if (library) lastLibrarySearch = location.search.slice(1);
+    if (players) lastPlayerSearch = location.search.slice(1);
+    gallery.title = players ? "Carte des positions des joueurs" : "Radar et clips";
+    byId("gallery-view").setAttribute("aria-label", players ? "Positions des joueurs" : "Galerie de clips");
     if (galleryPath !== path || refresh) {
         galleryPath = path;
         // The top-level URL owns history. Replacing the frame avoids extra Back steps.
         gallery.contentWindow.location.replace(path);
     } else if (library) {
         gallery.contentWindow.restoreLibraryAddress?.();
+    } else if (players) {
+        gallery.contentWindow.restorePlayerAddress?.();
     }
     home.hidden = true;
     byId("gallery-view").hidden = false;
-    updateNavigation(library ? "library" : "gallery");
-    if (focus) byId("library-link").focus();
+    updateNavigation(players ? "players" : library ? "library" : "gallery");
+    if (focus) byId(players ? "players-link" : "library-link").focus();
 }
 
 function openLibrary(exportId, focus = true) {
@@ -366,13 +383,13 @@ function showHome(focus = true) {
 
 function updateNavigation(section) {
     document.body.dataset.view = section;
-    const active = {library: "library-link", export: "back",
+    const active = {library: "library-link", players: "players-link", export: "back",
         galleries: "galleries-link", gallery: "galleries-link"}[section];
-    for (const id of ["library-link", "back", "galleries-link"]) {
+    for (const id of ["library-link", "players-link", "back", "galleries-link"]) {
         if (id === active) byId(id).setAttribute("aria-current", "page");
         else byId(id).removeAttribute("aria-current");
     }
-    byId("route-label").textContent = {library: "Vidéothèque", export: "Importation",
+    byId("route-label").textContent = {library: "Vidéothèque", players: "Joueurs", export: "Importation",
         galleries: "Galeries", gallery: "Galerie"}[section];
     byId("route-action").textContent = section === "export" ? "› Ouvrir la vidéothèque" : "↥ Importer .dem ou archive .rar";
     byId("route-action").disabled = section === "export" && !libraryAvailable;
@@ -461,6 +478,10 @@ byId("back").addEventListener("click", () => {
     renderRoute(true);
 });
 byId("library-link").addEventListener("click", () => openLibrary());
+byId("players-link").addEventListener("click", () => {
+    setAddress(lastPlayerSearch);
+    renderRoute(true);
+});
 byId("callouts-link").addEventListener("click", openCallouts);
 byId("galleries-link").addEventListener("click", () => {
     setAddress("view=galleries");
@@ -485,7 +506,7 @@ gallery.addEventListener("load", () => {
         }
     }
     const heading = gallery.contentDocument?.querySelector("main > header h1");
-    if (heading && !galleryPath?.startsWith("/library/")) heading.hidden = true;
+    if (heading && galleryPath?.startsWith("/exports/")) heading.hidden = true;
 });
 quit.addEventListener("click", async () => {
     try {

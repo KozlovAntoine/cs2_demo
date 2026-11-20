@@ -1,0 +1,39 @@
+:root {
+  --side-t: #f29423;
+  --side-ct: #378ef0;
+}
+
+.players-page { max-width: 1160px; }
+.player-workspace { display: grid; grid-template-columns: minmax(0, 1fr) minmax(240px, .44fr); gap: 16px; align-items: start; }
+.player-map-panel { grid-column: 1; grid-row: 1; padding: 8px; }
+.player-controls { grid-column: 2; grid-row: 1; padding: 18px; }
+.player-controls h2 { font-size: 1.12rem; }
+.player-filters { display: grid; gap: 8px; margin-block: 14px; }
+.player-filters label { display: grid; grid-template-columns: 48px minmax(0, 1fr); }
+.player-filters select { width: 100%; max-width: none; }
+.player-timer { padding-block: 12px; border-block: 1px solid var(--edge); }
+.player-timer-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.player-timer output { font-size: 1.3rem; font-variant-numeric: tabular-nums; font-weight: 650; }
+.player-timer input { width: 100%; margin: 12px 0 2px; accent-color: var(--accent); }
+.player-time-bounds { display: flex; justify-content: space-between; font-size: .78rem; color: var(--muted); }
+.player-legend { display: flex; gap: 12px; margin-top: 12px; }
+.player-legend span { display: inline-flex; align-items: center; gap: 6px; font-weight: 650; }
+.player-legend span::before { content: ""; width: 9px; height: 9px; border-radius: 50%; background: var(--side-color); }
+.player-terrorists { --side-color: var(--side-t); }
+.player-counter-terrorists { --side-color: var(--side-ct); }
+.player-message { color: var(--muted); font-size: .85rem; }
+.player-controls .player-message { margin-top: 8px; }
+.player-radar { position: relative; aspect-ratio: 1; overflow: hidden; border-radius: 6px; background: #10161c; }
+.player-radar img, .player-radar canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.player-radar img { object-fit: fill; }
+.player-radar canvas { pointer-events: none; }
+.player-map-status { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); width: max-content; max-width: calc(100% - 24px); padding: 7px 10px; border-radius: 5px; background: #10202aed; font-size: .82rem; text-align: center; }
+
+@media (max-width: 700px) {
+  .player-workspace { grid-template-columns: minmax(0, 1fr); }
+  .player-controls, .player-map-panel { grid-column: 1; grid-row: auto; }
+  .player-controls { padding: 12px; }
+  .player-filters { display: flex; flex-wrap: wrap; }
+  .player-filters label { display: inline-flex; }
+  .player-filters select { width: auto; }
+}

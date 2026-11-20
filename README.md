@@ -71,6 +71,8 @@ python utility_video.py --index-only "match-1.rar" "match-2.dem"
 
 Avec Demoparser installé, l’analyse écrit aussi `exports/.round-replays/<identifiant-démo>.json.gz` pour chaque démo. Ce fichier regroupe les positions XYZ à cinq relevés par seconde par round et par SteamID, avec les pseudos et les ticks de début et de fin. Le relevé couvre le round depuis la fin du gel jusqu’à son résultat. Le filtre d’utilitaire et la sélection des clips à générer sont indépendants de ce relevé.
 
+Dans **Joueurs**, sélectionne une carte puis **Rounds 1 à 12** pour superposer les premières mi-temps, ou sélectionne un numéro de round. La heatmap montre les positions des joueurs encore en vie sur les **0,5 dernières secondes**. Les T sont en orange et les CT en bleu. Tu peux lire le déroulé ou déplacer le curseur avec le compte à rebours de **1:55 à 0:00**.
+
 Les copies de travail des démos et les fichiers de capture intermédiaires sont nettoyés automatiquement après chaque capture et en cas d’échec. Si l’application ou le PC s’arrête avant le nettoyage, le prochain export supprime les fichiers temporaires signalés par l’export interrompu. Les `.dem` ou `.rar` d’origine servent aux prochains exports. Les clips restent lisibles depuis leurs MP4.
 
 Dans la vidéothèque, sélectionne un lancer et clique sur **Générer vidéo 9:16**. FFmpeg recadre le centre du MP4 existant en 720 × 1280 en conservant les proportions et le son. Après le rendu, **Ouvrir le dossier** donne accès au MP4. Le nom contient le joueur, la carte, le type d’utilitaire et la date du rendu au format `AAAA-MM-JJ HH-MM`.
