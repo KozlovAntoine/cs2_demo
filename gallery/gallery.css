@@ -69,9 +69,12 @@ select { color: #eef0f2; max-width: min(56vw, 270px); }
 .marker { position: absolute; z-index: 1; transform: translate(-50%, -50%) scale(var(--radar-inverse, 1)); display: grid; place-items: center; width: 13px; height: 13px; padding: 0; border: 1px solid #172027; border-radius: 50%; background: var(--tint); box-shadow: 0 0 0 1px #101418a0; color: #11161a; font-size: 10px; font-weight: 800; }
 .marker.cluster { z-index: 2; width: 28px; height: 28px; font-size: 11px; }
 .marker:focus-visible, .marker:hover, .marker[aria-pressed="true"] { z-index: 3; outline: 2px solid white; outline-offset: 2px; }
-#radar-routes { pointer-events: none; }
-.radar-link { position: absolute; height: 0; border-top: 2px dashed var(--tint); transform-origin: 0 0; filter: drop-shadow(0 1px 0 #101418); }
-.marker.linked-marker { width: 15px; height: 15px; background: #151b20; border: 2px solid var(--tint); pointer-events: auto; }
+#points, #radar-routes { pointer-events: none; }
+.marker, .radar-link { pointer-events: auto; }
+.radar-link { position: absolute; height: calc(10px * var(--radar-inverse, 1)); padding: 0; border: 0; background: transparent; transform-origin: 0 0; }
+.radar-link::before { content: ""; position: absolute; inset: 50% 0 auto; border-top: 2px dashed var(--tint); filter: drop-shadow(0 1px 0 #101418); pointer-events: none; }
+.radar-link:hover::before { filter: brightness(1.35) drop-shadow(0 1px 0 #101418); }
+.marker.linked-marker { width: 15px; height: 15px; background: #151b20; border: 2px solid var(--tint); }
 .player { position: relative; aspect-ratio: 16 / 9; background: #0c1013; }
 video { width: 100%; height: 100%; display: block; }
 .clip-list { max-height: 340px; overflow-y: auto; scrollbar-color: #525c67 #20262b; }

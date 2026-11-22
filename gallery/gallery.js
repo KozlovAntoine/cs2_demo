@@ -84,6 +84,7 @@ const copyStatus = byId("copy-status");
 let currentMatch;
 let filter = "all";
 let activeStatusFilters = new Set();
+let clipSort = "";
 let selectedSide = "";
 let selectedTeam = "";
 let selectedPlayers = new Set();
@@ -174,7 +175,7 @@ function createRadarViewport(viewport, content, onZoom) {
     viewport.addEventListener("pointerdown", (event) => {
         if (event.button !== 0 || !event.isPrimary) return;
         suppressClick = false;
-        if (!available || zoom === minZoom || event.target.closest(".marker, .callout-vertex, .radar-zoom")) return;
+        if (!available || zoom === minZoom || event.target.closest(".marker, .radar-link, .callout-vertex, .radar-zoom")) return;
         const { width, height } = viewport.getBoundingClientRect();
         pan = { id: event.pointerId, clientX: event.clientX, clientY: event.clientY, x, y, width, height };
     });
@@ -240,6 +241,7 @@ function syncAddress(replace = false) {
     if (filter !== "all") params.set("type", filter);
     if (clipSearch?.value.trim()) params.set("q", clipSearch.value.trim());
     if (roundSelect.value) params.set("round", roundSelect.value);
+    if (clipSort) params.set("sort", clipSort);
     for (const status of statusFilters.keys()) {
         if (activeStatusFilters.has(status)) params.append("status", status);
     }
@@ -393,12 +395,13 @@ function renderClipTitle(clip) {
         return;
     }
     const location = library ? calloutName(clip, currentMatch) : clip.player;
-    title.textContent = `${kinds[clip.kind].label} · ${location}`;
+    const score = isPotential(clip) ? ` · ${potentialPoints(clip)}` : "";
+    title.textContent = `${kinds[clip.kind].label} · ${location}${score}`;
 }
 
 function selectClip(clip, autoplay = false) {
     const changed = selected !== clip;
-    const scope = JSON.stringify([currentMatch?.map, filter, [...activeStatusFilters], roundSelect.value,
+    const scope = JSON.stringify([currentMatch?.map, filter, [...activeStatusFilters], roundSelect.value, clipSortMode(),
         frequencySelect?.value, selectedSide, selectedTeam, [...selectedPlayers]]);
     if (scope !== playbackScope) {
         playbackScope = scope;
@@ -479,8 +482,11 @@ function adjacentRowIndex(direction) {
     if (index !== -1 || !selected) return index + direction;
 
     // A clip marked as watched can stay in the player after leaving the filtered list.
-    if (activeStatusFilters.has("potential") && selected.potentialScore > 0) {
-        const next = visible.findIndex((clip) => comparePotential(selected, clip) < 0);
+    const compare = clipComparator();
+    if (compare) {
+        const clips = currentMatch.clips;
+        const selectedOrder = clips.indexOf(selected);
+        const next = visible.findIndex((clip) => (compare(selected, clip) || selectedOrder - clips.indexOf(clip)) < 0);
         const insertion = next < 0 ? visible.length : next;
         return direction > 0 ? insertion : insertion - 1;
     }
@@ -571,28 +577,32 @@ function renderRadarAnchorLinks(anchor) {
         const tint = kinds[clip.kind].color;
         const dx = anchor.position.left - position.left;
         const dy = anchor.position.top - position.top;
-        const line = document.createElement("span");
+        const line = document.createElement("button");
         line.className = "radar-link";
-        line.setAttribute("aria-hidden", "true");
+        line.tabIndex = -1;
         line.style.setProperty("--tint", tint);
         positionOnRadar(line, position);
         line.style.width = `${Math.hypot(dx, dy)}%`;
-        line.style.transform = `rotate(${Math.atan2(dy, dx)}rad)`;
+        line.style.transform = `rotate(${Math.atan2(dy, dx)}rad) translateY(-50%)`;
 
         const point = document.createElement("button");
-        point.type = "button";
         point.className = "marker linked-marker";
-        point.clip = clip;
         point.style.setProperty("--tint", tint);
         positionOnRadar(point, position);
         const floor = position.lower !== lower ? ` · niveau ${position.lower ? "bas" : "haut"}` : "";
         point.title = `${label} · ${clip.player} · R${clip.round}${floor}`;
-        point.setAttribute("aria-label", point.title);
-        point.setAttribute("aria-pressed", String(clip === selected));
-        point.addEventListener("click", () => {
+        line.title = `Trajectoire · ${point.title}`;
+        const selectRoute = () => {
             selectClip(clip, true);
             revealSelectedRow();
-        });
+        };
+        for (const target of [line, point]) {
+            target.type = "button";
+            target.clip = clip;
+            target.setAttribute("aria-label", target.title);
+            target.setAttribute("aria-pressed", String(clip === selected));
+            target.addEventListener("click", selectRoute);
+        }
         radarRoutes.append(line, point);
     }
 }
@@ -791,7 +801,23 @@ function refreshRadarGrouping() {
     syncAddress(true);
 }
 
-function renderRadar() {
+function selectedRadarGroups(groups, selection, radar, point) {
+    return groups.flatMap((group) => {
+        const clips = group.clips.filter((clip) => selection.has(clip));
+        if (!clips.length) return [];
+        if (clips.length === group.clips.length) return [group];
+        let left = 0;
+        let top = 0;
+        for (const clip of clips) {
+            const position = radarPosition(clip[point], radar);
+            left += position.left;
+            top += position.top;
+        }
+        return [{ left: left / clips.length, top: top / clips.length, clips }];
+    });
+}
+
+function renderRadar(restoreGroupId) {
     const { radar } = currentMatch;
     radarView?.setAvailable(Boolean(radar));
     const point = pointSelect.value;
@@ -827,11 +853,20 @@ function renderRadar() {
         renderHeatmap(radar, lower);
         return;
     }
-    const groups = radarGroupsForZoom(radar, point, lower);
+    let groups = radarGroupsForZoom(radar, point, lower);
+    if (restoreGroupId) {
+        radarSelection = groups.find(({ clips }) => clips.some((clip) => clipId(clip) === restoreGroupId))?.clips;
+    }
     if (radarSelection) {
-        const selection = new Set(radarSelection);
-        const selectedGroups = groups.filter(({ clips }) => clips.some((clip) => selection.has(clip)));
-        radarSelection = selectedGroups.length ? selectedGroups.flatMap(({ clips }) => clips) : undefined;
+        // Zoom changes how the selected clips are grouped, but never adds clips to the selection.
+        const focusedGroups = selectedRadarGroups(groups, new Set(radarSelection), radar, point);
+        if (focusedGroups.length) {
+            const selectedClips = new Set(focusedGroups.flatMap(({ clips }) => clips));
+            radarSelection = filtered.filter((clip) => selectedClips.has(clip));
+            groups = focusedGroups;
+        } else {
+            radarSelection = undefined;
+        }
     }
     const points = document.createDocumentFragment();
     for (const { left, top, clips } of groups) {
@@ -908,8 +943,24 @@ function isPotential(clip) {
     return clip?.potentialScore > 0 && !clip.favorite && !clip.potentialDismissed;
 }
 
+function potentialPoints(clip) {
+    const points = (clip.potentialScore * 100).toLocaleString("fr-FR", { maximumFractionDigits: 2 });
+    return `${points}/100 pts`;
+}
+
 function comparePotential(a, b) {
-    return b.potentialScore - a.potentialScore || clipId(a).localeCompare(clipId(b));
+    const aScore = isPotential(a) ? a.potentialScore : 0;
+    const bScore = isPotential(b) ? b.potentialScore : 0;
+    return bScore - aScore || (aScore > 0 ? clipId(a).localeCompare(clipId(b)) : a.round - b.round);
+}
+
+function clipSortMode() {
+    return clipSort || (activeStatusFilters.has("potential") ? "points" : "round");
+}
+
+function clipComparator() {
+    if (clipSortMode() === "points") return comparePotential;
+    if (library) return (a, b) => a.round - b.round;
 }
 
 function syncReviewButtons() {
@@ -935,20 +986,26 @@ async function reviewClip(button, updates) {
     try {
         const state = await request("/api/clip-state", { ...clipReference(clip), ...updates });
         const wasPotential = isPotential(clip);
+        const potentialOnly = activeStatusFilters.has("potential");
+        const advance = potentialOnly && wasPotential && selected === clip
+            && (state.favorite === true || state.potentialDismissed === true);
+        // Use the current rank before the review removes the clip's points from the sort.
+        const next = advance ? visible[adjacentRowIndex(1)] ?? visible[adjacentRowIndex(-1)] : selected;
         clip.favorite = state.favorite === true;
         clip.potentialDismissed = state.potentialDismissed === true;
-        const potentialOnly = activeStatusFilters.has("potential");
+        if (selected === clip) renderClipTitle(clip);
         const leavesFilter = (activeStatusFilters.has("favorites") && !clip.favorite)
             || (potentialOnly && !isPotential(clip));
-        const advance = potentialOnly && wasPotential && selected === clip;
         if (leavesFilter && (advance || filtered.includes(clip))) {
-            const next = advance ? visible[adjacentRowIndex(1)] ?? visible[adjacentRowIndex(-1)] : selected;
             const scroll = list.scrollTop;
             renderClips(undefined, undefined, next);
             syncAddress(true);
             if (advance && updates.favorite === true && selected) selectClip(selected, true);
             list.scrollTop = scroll;
             if (next !== clip) revealSelectedRow();
+        } else if (clipSortMode() === "points" && wasPotential !== isPotential(clip) && filtered.includes(clip)) {
+            renderClips(undefined, selected);
+            syncAddress(true);
         } else {
             const row = clipRowAt(visible.indexOf(clip));
             if (row) {
@@ -973,7 +1030,7 @@ dismissPotentialButton.addEventListener("click", () => {
     if (isPotential(selected)) reviewClip(dismissPotentialButton, { potentialDismissed: true });
 });
 
-function renderClips(deletion, playingClip, preferred = selected) {
+function renderClips(deletion, playingClip, preferred = selected, restoreGroupId) {
     const frequency = frequencySelect?.value;
     const query = clipSearch?.value.trim().toLocaleLowerCase("fr");
     const potentialOnly = activeStatusFilters.has("potential");
@@ -985,8 +1042,10 @@ function renderClips(deletion, playingClip, preferred = selected) {
         && (!potentialOnly || isPotential(clip))
         && matchesThrowFilters(clip)
         && (!query || calloutName(clip, currentMatch).toLocaleLowerCase("fr").includes(query)));
-    if (potentialOnly) filtered.sort(comparePotential);
-    renderRadar();
+    const compare = clipComparator();
+    if (compare) filtered.sort(compare);
+    if (clipStateEnabled) byId("clip-sort").textContent = clipSortMode() === "points" ? "Tri par points" : "Tri par round";
+    renderRadar(restoreGroupId);
     const rows = radarSelection ?? filtered;
     if (deletion && selected === deletion.clip) {
         const index = radarSelection ? deletion.row : deletion.filtered;
@@ -1073,7 +1132,8 @@ function renderClipPage(page) {
                     favorite.hidden = !clip.favorite;
                     const potential = document.createElement("span");
                     potential.className = "potential-badge";
-                    potential.textContent = "Potentiel favori";
+                    potential.textContent = clip.potentialScore > 0
+                        ? `Potentiel favori · ${potentialPoints(clip)}` : "Potentiel favori";
                     potential.hidden = !isPotential(clip);
                     tags.append(favorite, potential);
                 }
@@ -1394,13 +1454,11 @@ function switchMatch({ round = "", level = "upper", groupId, selectedId, fromAdd
     renderRounds(round);
     levelSelect.value = currentMatch.radar?.lower ? level : "upper";
     renderFilters(fromAddress);
-    const group = groupId && currentMatch.clips.find((clip) => clipId(clip) === groupId);
-    if (group) radarSelection = [group];
     const clip = selectedId && currentMatch.clips.find((item) => clipId(item) === selectedId);
     // A clip just marked as seen can still be open in the player under À traiter.
-    if (clip?.watched && activeStatusFilters.has("unwatched") && matchesThrowFilters(clip)
-        && (!activeStatusFilters.has("potential") || isPotential(clip))) renderClips(undefined, clip);
-    else renderClips(undefined, undefined, fromAddress ? clip || null : selected);
+    const keepPlaying = clip?.watched && activeStatusFilters.has("unwatched") && matchesThrowFilters(clip)
+        && (!activeStatusFilters.has("potential") || isPotential(clip));
+    renderClips(undefined, keepPlaying ? clip : undefined, fromAddress ? clip ?? null : selected, groupId);
     revealSelectedRow();
 }
 
@@ -1421,6 +1479,14 @@ if (frequencySelect && library) {
         syncAddress();
     });
 }
+const clipSortButton = byId("clip-sort");
+clipSortButton.hidden = !clipStateEnabled;
+clipSortButton.addEventListener("click", () => {
+    clipSort = clipSortMode() === "points" ? "round" : "points";
+    renderClips(undefined, selected);
+    syncAddress();
+});
+
 for (const [status, button] of statusFilters) {
     button.hidden = !clipStateEnabled;
     button.addEventListener("click", () => {
@@ -1449,6 +1515,8 @@ function restoreLibraryAddress() {
     const statuses = clipStateEnabled ? params.getAll("status") : [];
     activeStatusFilters = new Set(statuses.includes("favorites") ? ["favorites"]
         : statuses.filter((status) => statusFilters.has(status)));
+    const sort = params.get("sort");
+    clipSort = clipStateEnabled && (sort === "round" || sort === "points") ? sort : "";
     const frequency = params.get("frequency");
     if (frequencySelect) frequencySelect.value = Object.hasOwn(frequencyLabels, frequency) ? frequency : "";
     setThrowSide(params.get("side"));
@@ -1566,10 +1634,10 @@ for (const control of [pointSelect, levelSelect]) {
     });
 }
 byId("radar").addEventListener("click", (event) => {
-    if (radarSelection && !event.target.closest(".marker, .radar-zoom")) {
+    if (radarSelection && !event.target.closest(".marker, .radar-link, .radar-zoom")) {
         playbackScope = undefined;
         radarSelection = undefined;
-        renderRadarLinks();
+        renderRadar();
         renderClipList();
         syncAddress();
     }
