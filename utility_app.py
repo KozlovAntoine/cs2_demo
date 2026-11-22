@@ -28,6 +28,7 @@ from clip_library import (
 )
 from portrait_video import existing_portrait, generate_portrait, portrait_folder
 from round_replay import FIRST_HALF_ROUNDS, player_heatmap, replay_index
+from throw_index import unrendered_throws
 from utility_video import (
     CALIBRATION, ROOT, find_csdm, generate, generate_export, inspect_demo_source, radar_layout, reserve_export, run,
 )
@@ -176,6 +177,8 @@ class App:
             kind = data.get("kind")
             member = data.get("demo")
             limit = data.get("limit")
+            capture_mode = data.get("captureMode", "potential")
+            score_threshold = data.get("scoreThreshold")
             if not isinstance(kind, str) or (kind != "all" and kind not in UTILITY_KINDS):
                 raise ValueError("Type d’utilitaire invalide.")
             if member is not None:
@@ -184,10 +187,17 @@ class App:
                     raise ValueError("Cette démo ne fait pas partie de l’archive sélectionnée.")
             if limit is not None and (type(limit) is not int or limit < 1):
                 raise ValueError("La limite de clips doit être un entier supérieur à zéro.")
+            if capture_mode not in ("potential", "all"):
+                raise ValueError("Mode de capture invalide.")
+            if score_threshold is not None and (capture_mode != "potential"
+                                                or type(score_threshold) not in (float, int)
+                                                or not 0 < score_threshold < 1):
+                raise ValueError("Le seuil doit être compris entre 0 et 1, exclus.")
             paths = self.selected_paths
             options = argparse.Namespace(demo=paths[0], output=self.output, csdm=self.csdm,
                                          type=kind, map=None, demo_member=member, limit=limit,
-                                         prepare=False, no_open=True)
+                                         prepare=False, no_open=True, all_clips=capture_mode == "all",
+                                         score_threshold=score_threshold)
             queue = {
                 (path, entry["member"]): {
                     "name": entry["member"].rsplit("/", 1)[-1] if entry["member"] else path.name,
@@ -210,6 +220,8 @@ class App:
 
             description = f"Sources · {', '.join(path.name for path in paths)}\n"
             description += f"Utilitaire · {kind} | Limite · {limit if limit is not None else 'aucune'}"
+            if capture_mode == "potential":
+                description += f" | Seuil Potentiel favori · {score_threshold if score_threshold is not None else 'auto'}"
             if member is not None:
                 description += f"\nDémo sélectionnée dans l’archive · {member}"
             return self.start_job(render_export, log_kind="export", description=description, controllable=True,
@@ -507,10 +519,32 @@ class Handler(BaseHTTPRequestHandler):
                 self.json_response(app.portrait_status(clip_reference(data)))
             except (ValueError, OSError) as error:
                 self.json_response({"error": error_message(error)}, HTTPStatus.BAD_REQUEST)
+        elif path == "/api/throw-index":
+            name = parse_qs(url.query).get("map", [""])[0]
+            try:
+                clip_ids = set()
+                for folder, _, catalogue in published_catalogues(app.output):
+                    for match in playable_matches(folder, catalogue):
+                        if match["map"] == name:
+                            clip_ids.update(f"{folder.name}/{Path(clip['video']).name}" for clip in match["clips"])
+                    for match in catalogue["matches"]:
+                        if match["map"] == name:
+                            clip_ids.update(f"{folder.name}/{clip['file']}" for clip in match.get("removedThrows", ())
+                                            if "file" in clip)
+                self.json_response({"throws": unrendered_throws(app.output, name, clip_ids)}, allow_gzip=True)
+            except (ValueError, OSError) as error:
+                self.json_response({"error": error_message(error)}, HTTPStatus.BAD_REQUEST)
         elif path == "/library/catalogue.js":
             with app.lock:
                 data = library_catalogue(app.output)
+                installation = app.radar_installation() if any(match.get("throwIndex") and not match["radar"]
+                                                               for match in data["matches"]) else None
                 for match in data["matches"]:
+                    if match.get("throwIndex") and not match["radar"]:
+                        radar = radar_layout(match["map"], installation)
+                        if radar:
+                            match["radar"] = {**radar, "upper": f"/callout-radars/{radar['upper'].name}",
+                                              "lower": f"/callout-radars/{radar['lower'].name}" if radar["lower"] else None}
                     if match["map"] in CALIBRATION:
                         try:
                             match["zones"] = read_zones(app.output, match["map"])

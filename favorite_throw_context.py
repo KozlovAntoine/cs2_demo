@@ -10,7 +10,6 @@ from uuid import uuid4
 
 from clip_library import playable_matches, published_catalogues
 from grenade_data import KINDS, point, unpack
-from utility_video import describe_archive, find_csdm, load_demos
 
 
 CONTEXT_FOLDER = ".favorite-throw-context"
@@ -104,7 +103,8 @@ def cache_context(output, name, context):
 
 
 def refresh_context(output, sources, installation, clips):
-    analyzer = installation / "resources" / "static" / "csda.exe"
+    from utility_video import describe_archive, load_demos, run_demo_analyzer
+
     completed = set()
     for source in sources:
         if source.suffix.lower() == ".rar":
@@ -122,9 +122,8 @@ def refresh_context(output, sources, installation, clips):
                 demo, = load_demos(source, work, None, (member,) if member else ())
                 csv_folder = work / "csv"
                 csv_folder.mkdir()
-                subprocess.run([analyzer, f"-demo-path={demo}", f"-output={csv_folder}", "-format=csdm",
-                                "-positions"], check=True, stdout=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
-                               env={**os.environ, "TEMP": str(work), "TMP": str(work)})
+                run_demo_analyzer(installation, demo, csv_folder, stdin=subprocess.DEVNULL,
+                                  env={**os.environ, "TEMP": str(work), "TMP": str(work)})
                 context = extract_context(csv_folder, demo, clips[name])
             if context:
                 cache_context(output, name, context)
@@ -134,6 +133,8 @@ def refresh_context(output, sources, installation, clips):
 
 
 def main():
+    from utility_video import find_csdm
+
     parser = argparse.ArgumentParser(description="Enrichit le tri des clips existants depuis les démos GOTV.")
     parser.add_argument("demos", nargs="+", type=Path)
     parser.add_argument("--output", type=Path, default=Path(__file__).resolve().parent / "exports")

@@ -41,6 +41,10 @@ python utility_app.py --csdm "../CS Demo Manager"
 
 Dans **Nouvel export**, clique sur **Parcourir…** et sélectionne les `.dem` ou `.rar` à traiter. Maintiens **Ctrl** pour choisir plusieurs fichiers. Choisis le type d’utilitaire, puis clique sur **Générer les clips**. Avec une seule archive sélectionnée, tu peux choisir une démo de l’archive. Avec plusieurs fichiers, toutes les démos de chaque archive sont traitées. **Galeries** donne accès aux exports individuels terminés.
 
+Par défaut, **Potentiels favoris** capture uniquement les lancers distincts dont le score dépasse le seuil. L’application ajuste automatiquement ce seuil pour retrouver au moins **90 % des favoris** sur les démos réservées à la validation. Tu peux renseigner un seuil dans **Options de rendu**. **Tous les lancers distincts** permet de créer des clips pour démarrer le tri. La commande accepte aussi `--score-threshold` et `--all-clips`.
+
+L’analyse enregistre les lancers de tous les utilitaires, y compris ceux qui restent sous le seuil. La heatmap continue de compter ces occurrences et de les filtrer par équipe, joueur, côté ou round. La liste des clips présente les vidéos disponibles. Les lancers et relevés de joueurs sont conservés dans `exports/`.
+
 Pendant un export, **Pause** demande un arrêt entre deux démos. La démo en capture termine ses clips, puis le traitement attend **Reprendre**. **Annuler le traitement** arrête le travail actif, récupère les MP4 finalisés et nettoie les fichiers de travail. Les clips récupérés restent accessibles dans **Galeries**. Une démo interrompue peut être réimportée pour générer les clips manquants. Actualiser le navigateur permet de retrouver les commandes et l’état du traitement.
 
 Chaque export lancé dans le navigateur écrit un fichier `.log` horodaté dans `exports/logs/`. Un lot de plusieurs démos produit un seul journal. Les rendus 9:16 ont leur propre journal dans le même dossier. Les messages d’avancement, les sorties des outils et le détail des erreurs restent disponibles après la fermeture de l’application et le nettoyage des fichiers de travail.

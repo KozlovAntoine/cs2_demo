@@ -5,6 +5,8 @@ const choose = byId("choose");
 const submit = byId("submit");
 const demo = byId("demo");
 const limit = byId("limit");
+const captureMode = byId("capture-mode");
+const scoreThreshold = byId("score-threshold");
 const controls = byId("controls");
 const gallery = byId("gallery");
 const home = byId("home");
@@ -462,7 +464,8 @@ byId("generate").addEventListener("submit", async (event) => {
     try {
         const { job } = await request("/api/generate", {
             selection: selected.id, kind: byId("kind").value, demo: demo.value || null,
-            limit: limit.value ? Number(limit.value) : null,
+            limit: limit.value ? Number(limit.value) : null, captureMode: captureMode.value,
+            scoreThreshold: scoreThreshold.disabled || !scoreThreshold.value ? null : scoreThreshold.valueAsNumber,
         });
         awaitingJob = job.id;
         displayJob(job);
@@ -471,6 +474,9 @@ byId("generate").addEventListener("submit", async (event) => {
         refreshControls();
         setNotification(error.message);
     }
+});
+captureMode.addEventListener("change", () => {
+    scoreThreshold.disabled = captureMode.value === "all";
 });
 
 byId("back").addEventListener("click", () => {

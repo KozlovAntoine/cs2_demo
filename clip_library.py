@@ -11,6 +11,7 @@ from uuid import uuid4
 
 from grenade_data import UTILITY_KINDS
 from throw_groups import RADAR_GROUP_RADIUS, THROW_GROUP_SIZE_UNITS
+from throw_index import indexed_maps
 
 
 CATALOGUE_PREFIX = "window.utilityCatalogue = "
@@ -265,6 +266,8 @@ def library_catalogue(output):
                 entry["radar"] = {**radar, "upper": f"{base}/{radar['upper']}",
                                   "lower": f"{base}/{radar['lower']}" if radar.get("lower") else None}
             entry["clips"].extend(clips)
+    for map_name in indexed_maps(output):
+        maps.setdefault(map_name, {"map": map_name, "radar": None, "clips": []})["throwIndex"] = True
     return {"title": "Vidéothèque", "groupRadius": RADAR_GROUP_RADIUS, "groupBoxUnits": THROW_GROUP_SIZE_UNITS,
             "matches": [maps[map_name] for map_name in sorted(maps)]}
 
@@ -332,7 +335,8 @@ def delete_clip(output, export_id, filename):
         remaining = []
         for clip in match["clips"]:
             if clip.get("video") == f"clips/{filename}":
-                match.setdefault("removedThrows", []).append({key: clip[key] for key in ("kind", "launch", "impact")})
+                match.setdefault("removedThrows", []).append(
+                    {**{key: clip[key] for key in ("kind", "launch", "impact")}, "file": filename})
                 removed = True
             else:
                 remaining.append(clip)

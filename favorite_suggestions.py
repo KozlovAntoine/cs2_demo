@@ -3,7 +3,7 @@ import json
 import math
 import sys
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from uuid import uuid4
 
@@ -19,6 +19,7 @@ except ModuleNotFoundError:
 
 
 SUGGESTION_RATE = 0.54
+CAPTURE_TARGET_RECALL = 0.90
 
 
 @dataclass
@@ -104,9 +105,10 @@ def features(throw):
             **{f"{kind}:{name}": value for name, value in values.items()}}
 
 
-def feature_matrix(throws):
+def feature_matrix(throws, names=None):
     rows = [features(throw) for throw in throws]
-    names = sorted({name for row in rows for name in row})
+    if names is None:
+        names = sorted({name for row in rows for name in row})
     return np.array([[row.get(name, 0) for name in names] for row in rows], dtype="float32")
 
 
@@ -114,7 +116,7 @@ def sigmoid(values):
     return 1 / (1 + np.exp(-np.clip(values, -20, 20)))
 
 
-def favorite_model(features, labels, weights):
+def fit_favorite_model(features, labels, weights):
     # Weighted logistic regression. Regularization shrinks weak correlations toward zero.
     fit = weights > 0
     matrix = features[fit]
@@ -127,7 +129,7 @@ def favorite_model(features, labels, weights):
     for _ in range(350):
         errors = (sigmoid(matrix @ coefficients) - y) * w
         coefficients -= 0.2 * (matrix.T @ errors / w.sum() + penalty * coefficients)
-    return sigmoid(features @ coefficients)
+    return coefficients
 
 
 def geometry_similarity(throws, reviewed):
@@ -159,12 +161,68 @@ def geometry_similarity(throws, reviewed):
 
 
 def predictions(matrix, similarity, reviewed, labels, weights):
-    base = favorite_model(matrix, labels, weights)
+    base = sigmoid(matrix @ fit_favorite_model(matrix, labels, weights))
     # Correct the general score using comparable launches and activations on the same map.
     evidence = weights[reviewed]
     residual = (labels[reviewed] - base[reviewed]) * evidence
     adjustment = (similarity @ residual) / (3 + similarity @ evidence)
     return np.clip(base + adjustment, 0.001, 0.999)
+
+
+@dataclass
+class CaptureRanker:
+    references: list
+    columns: list
+    coefficients: np.ndarray
+    residual: np.ndarray
+    weights: np.ndarray
+    threshold: float
+    favorites: int
+    recovered: int
+
+    def scores(self, candidates):
+        if not candidates:
+            return []
+        matrix = feature_matrix(candidates, self.columns)
+        first = len(self.references)
+        similarity = geometry_similarity([*self.references, *candidates], np.arange(first))[first:]
+        base = sigmoid(matrix @ self.coefficients)
+        adjustment = (similarity @ self.residual) / (3 + similarity @ self.weights)
+        return np.clip(base + adjustment, 0.001, 0.999)
+
+
+def train_capture_ranker(output, threshold=None):
+    references = [throw for throw in read_throws(output) if throw.label[1]]
+    positive_count = sum(throw.label[0] for throw in references)
+    size = len(references)
+    by_demo = defaultdict(list)
+    for index, throw in enumerate(references):
+        by_demo[throw.clip["source"].casefold()].append(index)
+    if positive_count < 5 or size - positive_count < 5 or len(by_demo) < 2:
+        raise ValueError("Le tri par score a besoin de 5 favoris, 5 clips vus ou écartés et de retours sur deux démos.")
+
+    # Reproduce the inputs of a new capture, which has no history in other demos yet.
+    novel = [replace(throw, clip={**throw.clip, "usage": {"demos": 1, "total": 1}}) for throw in references]
+    examples = [*references, *novel]
+    columns = sorted({name for throw in examples for name in features(throw)})
+    matrix = feature_matrix(examples, columns)
+    reviewed = np.arange(size)
+    similarity = geometry_similarity(examples, reviewed)
+    labels, weights = np.array([throw.label for throw in references] + [(0, 0)] * size, dtype="float32").T
+    validation = np.zeros(size)
+    for test in by_demo.values():
+        training = weights.copy()
+        training[test] = 0
+        validation[test] = predictions(matrix, similarity, reviewed, labels, training)[np.array(test) + size]
+    favorite_scores = np.sort(validation[labels[:size] == 1])
+    if threshold is None:
+        wanted = math.ceil(CAPTURE_TARGET_RECALL * len(favorite_scores))
+        # Round down to the nearest lower thousandth so the cutoff can use a strict inequality.
+        threshold = (math.ceil(float(favorite_scores[-wanted]) * 1000) - 1) / 1000
+    coefficients = fit_favorite_model(matrix[:size], labels[:size], weights[:size])
+    residual = (labels[:size] - sigmoid(matrix[:size] @ coefficients)) * weights[:size]
+    return CaptureRanker(references, columns, coefficients, residual, weights[:size], threshold,
+                         positive_count, int(np.count_nonzero(favorite_scores > threshold)))
 
 
 def top_indices(scores, groups, rate):

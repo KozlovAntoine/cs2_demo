@@ -18,17 +18,20 @@ from capture_progress import CaptureProgress
 from clip_library import CATALOGUE_PREFIX, record_throw_usage, throw_references
 from csdm_capture_pause import shorten_capture_pause
 from demo_imports import demo_fingerprint, read_demo_imports, record_demo_import
-from grenade_data import KINDS, read_clips
+from favorite_throw_context import extract_context
+from grenade_data import KINDS, UTILITY_KINDS, read_clips
 from job_control import JobCancelled, check_job_cancelled, current_control, job_checkpoint
 from job_log import current_job_log, log_command_output
 from round_replay import write_round_replay
 from throw_groups import RADAR_GROUP_RADIUS, THROW_GROUP_SIZE_UNITS, group_throws
+from throw_index import record_throw_index
 from throw_inputs import add_throw_inputs
 
 
 ROOT = Path(__file__).resolve().parent
 PROJECT_CSDM = ROOT / ".local" / "csdm"
 CAPTURE_WORK_MARKER = ".capture-in-progress"
+FALLBACK_DEMO_SOURCE = "esl"
 CALIBRATION = json.loads((ROOT / "radars.json").read_text(encoding="utf-8"))
 
 
@@ -256,6 +259,10 @@ def completed_video(file):
         return False
 
 
+def capture_filename(map_number, number, clip):
+    return f"m{map_number}-{number:04d}-{clip['kind']}.mp4"
+
+
 def publish_videos(render_folder, clips, out, map_number, *, completed_only=False):
     videos = sequence_videos(render_folder)
     logger = current_job_log()
@@ -280,7 +287,7 @@ def publish_videos(render_folder, clips, out, map_number, *, completed_only=Fals
             if logger:
                 logger.warning("MP4 illisible · %s", source.name)
             continue
-        destination = clips_dir / f"m{map_number}-{number:04d}-{clip['kind']}.mp4"
+        destination = clips_dir / capture_filename(map_number, number, clip)
         try:
             shutil.move(source, destination)
         except PermissionError:
@@ -308,13 +315,40 @@ def publish_gallery(out, source, matches):
     return out / "index.html"
 
 
-def analyze_demo(installation, demo, kind, work, *, replay_output=None):
+def run_demo_analyzer(installation, demo, folder, **options):
+    analyzer = installation / "resources" / "static" / "csda.exe"
+    command = [analyzer, f"-demo-path={demo}", f"-output={folder}", "-format=csdm", "-positions"]
+    try:
+        run(command, capture_output=True, **options)
+        return None
+    except subprocess.CalledProcessError as error:
+        output = error.stderr or error.stdout or ""
+        if isinstance(output, bytes):
+            output = output.decode("utf-8", errors="replace")
+        if "unknown demo source" not in output.lower():
+            raise
+    if logger := current_job_log():
+        logger.info("Provenance non détectée pour %s · nouvelle analyse en mode tournoi (%s).",
+                    demo.name, FALLBACK_DEMO_SOURCE)
+    run([*command, f"-source={FALLBACK_DEMO_SOURCE}"], capture_output=True, **options)
+    return FALLBACK_DEMO_SOURCE
+
+
+def analyze_demo(installation, demo, kind, work, *, replay_output=None, contexts=None):
     job_checkpoint()
     with tempfile.TemporaryDirectory(dir=work) as temp:
-        analyzer = installation / "resources" / "static" / "csda.exe"
-        run([analyzer, f"-demo-path={demo}", f"-output={temp}", "-format=csdm", "-positions"])
         folder = Path(temp)
+        analysis_source = run_demo_analyzer(installation, demo, folder)
         result = read_clips(folder, demo, kind)
+        if analysis_source:
+            for clip in result[2]:
+                clip["analysisSource"] = analysis_source
+        if contexts is not None:
+            try:
+                contexts.update(extract_context(folder, demo, {id(clip): clip for clip in result[2]}))
+            except (OSError, ValueError, IndexError) as error:
+                if logger := current_job_log():
+                    logger.warning("Contexte de tri incomplet pour %s · %s", demo.name, error)
         if replay_output is not None:
             map_name, tick_rate, _, checksum = result
             try:
@@ -339,6 +373,12 @@ def record_known_throw_usage(output, previous, occurrences, checksum, *, current
     return indexed
 
 
+def clip_index_references(previous, current_export=None):
+    for clip in previous:
+        export_id = clip["exportId"] if "exportId" in clip else current_export.name
+        yield clip, f"{export_id}/{Path(clip['video']).name}"
+
+
 def index_throw_metadata(args):
     output = args.output.resolve(strict=True)
     installation = find_csdm(args.csdm)
@@ -355,6 +395,9 @@ def index_throw_metadata(args):
                         previous, removed = throw_references(output, map_name)
                         _, occurrences = group_throws(clips, previous, removed=removed)
                         indexed = record_known_throw_usage(output, previous, occurrences, checksum)
+                        kinds = UTILITY_KINDS if args.type == "all" else (args.type,)
+                        record_throw_index(output, map_name, checksum, demo.name, clips, kinds,
+                                           occurrences, clip_index_references(previous), removed)
                         print(f"{demo.name} · {indexed} clips associés à cette démo.", flush=True)
                         release_staged_demo(demo, work)
             except (OSError, ValueError, subprocess.SubprocessError) as error:
@@ -363,9 +406,10 @@ def index_throw_metadata(args):
     return int(failed)
 
 
-def record_video(installation, demo, config, before_capture):
+def record_video(installation, demo, config, before_capture, *, source=None):
     job_checkpoint()
-    analysis = csdm(installation, "analyze", demo, "--json", stdout=subprocess.PIPE, encoding="utf-8",
+    source_options = ("--source", source) if source else ()
+    analysis = csdm(installation, "analyze", demo, "--json", *source_options, stdout=subprocess.PIPE, encoding="utf-8",
                     errors="replace", log_stdout=False)
     try:
         if json.loads(analysis.stdout)["failed"]:
@@ -450,6 +494,8 @@ def export_demos(args, source, installation, out, work, update, on_import, on_pr
     gallery = None
     duplicate_count = 0
     failed_demos = 0
+    indexed_throws = 0
+    selective = not args.prepare and not getattr(args, "all_clips", False)
 
     def finish_demo(demo, fingerprint, demo_member):
         if args.prepare:
@@ -473,37 +519,79 @@ def export_demos(args, source, installation, out, work, update, on_import, on_pr
         fingerprint = demo_fingerprint(demo) if not args.prepare else None
         if fingerprint and fingerprint[0] in imports:
             update("Analyse", f"{demo.name} · Déjà importé.")
-        map_name, tick_rate, clips, checksum = analyze_demo(installation, demo, args.type, work,
-                                                            replay_output=None if args.prepare else out.parent)
-        if not clips:
+        contexts = {} if selective else None
+        map_name, tick_rate, throws, checksum = analyze_demo(
+            installation, demo, args.type if args.prepare else "all", work,
+            replay_output=None if args.prepare else out.parent, contexts=contexts)
+        if not throws:
             update("Analyse", f"{map_name} : aucun lancer correspondant.")
             finish_demo(demo, fingerprint, demo_member)
             queue("skipped", map=map_name, note="Aucun lancer correspondant.")
             continue
         previous, removed = throw_references(out.parent, map_name)
         previous.extend(clip for match in matches if match["map"] == map_name for clip in match["clips"])
-        unique, occurrences = group_throws(clips, previous, removed=removed)
-        skipped = len(clips) - len(unique)
+        unique, occurrences = group_throws(throws, previous, removed=removed)
+        skipped = len(throws) - len(unique)
         duplicate_count += skipped
         if skipped:
             update("Analyse", f"{map_name} · {skipped} {'doublon ignoré' if skipped == 1 else 'doublons ignorés'}.")
         if not args.prepare:
             record_known_throw_usage(out.parent, previous, occurrences, checksum, current_export=out)
-        clips = unique[:args.limit]
+        candidates = [clip for clip in unique if args.type == "all" or clip["kind"] == args.type]
+        if not selective:
+            candidates = candidates[:args.limit]
+        clips = []
+        try:
+            if candidates:
+                try:
+                    add_throw_inputs(demo, candidates, tick_rate)
+                except JobCancelled:
+                    raise
+                except Exception as error:
+                    if logger := current_job_log():
+                        logger.warning("Commandes de lancer indisponibles pour %s", demo.name, exc_info=True)
+                    update("Analyse", f"Commandes de lancer indisponibles pour {demo.name} · {error}")
+                for clip in candidates:
+                    clip["duration"] = round((clip["endTick"] - clip["startTick"]) / tick_rate, 1)
+                if selective:
+                    try:
+                        from favorite_suggestions import Throw, train_capture_ranker
+                    except ImportError as error:
+                        raise ValueError("Le tri par score nécessite NumPy, fourni avec Demoparser.") from error
+                    model = getattr(args, "capture_ranker", None)
+                    if model is None:
+                        try:
+                            model = train_capture_ranker(out.parent, getattr(args, "score_threshold", None))
+                        except ValueError as error:
+                            raise ValueError(f"{error} Sélectionne « Tous les lancers distincts » pour créer des clips.") from error
+                        args.capture_ranker = model
+                        update("Analyse", f"Seuil de capture · {model.threshold:.3f} · "
+                               f"{model.recovered}/{model.favorites} favoris retrouvés sur les démos de validation.")
+                    samples = [Throw(map_name, {**clip, "usage": {"demos": 1, "total": len(occurrences[id(clip)])}},
+                                     contexts.get(id(clip), {})) for clip in candidates]
+                    for clip, score in zip(candidates, model.scores(samples), strict=True):
+                        clip["potentialScore"] = float(score)
+                        if score > model.threshold:
+                            clips.append(clip)
+                    update("Analyse", f"{len(clips)}/{len(candidates)} lancers distincts au-dessus du seuil "
+                           f"de {model.threshold:.3f}.")
+                    clips = clips[:args.limit]
+                else:
+                    clips = candidates
+        finally:
+            if not args.prepare:
+                references = list(clip_index_references(previous, out))
+                references.extend((clip, f"{out.name}/{capture_filename(map_number, number, clip)}")
+                                  for number, clip in enumerate(clips, 1))
+                record_throw_index(out.parent, map_name, checksum, demo.name, throws, UTILITY_KINDS,
+                                   occurrences, references, removed)
+                indexed_throws += len(throws)
         if not clips:
             finish_demo(demo, fingerprint, demo_member)
-            queue("skipped", map=map_name, duplicates=skipped)
+            queue("skipped", map=map_name, duplicates=skipped, note="Lancers indexés. Aucun clip à générer.")
             continue
         radar = radar_layout(map_name, installation)
         queue("analysis", map=map_name, total=len(clips), duplicates=skipped)
-        try:
-            add_throw_inputs(demo, clips, tick_rate)
-        except JobCancelled:
-            raise
-        except Exception as error:
-            if logger := current_job_log():
-                logger.warning("Commandes de lancer indisponibles pour %s", demo.name, exc_info=True)
-            update("Analyse", f"Commandes de lancer indisponibles pour {demo.name} · {error}")
         counts = Counter(clip["kind"] for clip in clips)
         estimates = sum(clip["estimated"] for clip in clips)
         update("Analyse", f"{map_name} : {len(clips)} {'clip' if len(clips) == 1 else 'clips'} "
@@ -523,7 +611,8 @@ def export_demos(args, source, installation, out, work, update, on_import, on_pr
                        f"{'clip' if expected == 1 else 'clips'} sur {map_name}.")
 
             try:
-                record_video(installation, demo, config, before_capture)
+                source_options = {"source": clips[0]["analysisSource"]} if "analysisSource" in clips[0] else {}
+                record_video(installation, demo, config, before_capture, **source_options)
             except JobCancelled:
                 cancelled = True
                 update("Annulation", "Arrêt de CS2 et récupération des clips finalisés…")
@@ -547,7 +636,6 @@ def export_demos(args, source, installation, out, work, update, on_import, on_pr
             update("Préparation", f"Configuration : {config}")
         for clip in clips:
             del clip["flight"], clip["yaw"], clip["steamId"]
-            clip["duration"] = round((clip["endTick"] - clip["startTick"]) / tick_rate, 1)
         if clips:
             matches.append({"map": map_name, "demo": demo.name, "radar": publish_radar(radar, out),
                             "clips": clips})
@@ -564,7 +652,7 @@ def export_demos(args, source, installation, out, work, update, on_import, on_pr
         queue("partial" if missing or capture_failed else "complete",
               published=len(clips), gallery=gallery if clips else None)
         check_job_cancelled()
-    return gallery, duplicate_count, failed_demos
+    return gallery, duplicate_count, failed_demos, indexed_throws
 
 
 def generate_export(args, output, report, on_import=None, on_progress=None):
@@ -592,8 +680,8 @@ def generate_export(args, output, report, on_import=None, on_progress=None):
         if not args.prepare:
             (out / CAPTURE_WORK_MARKER).touch(exist_ok=False)
         update("Préparation", f"Dossier de la galerie : {out}")
-        gallery, duplicate_count, failed_demos = export_demos(args, source, installation, out, work, update,
-                                                            on_import, on_progress)
+        gallery, duplicate_count, failed_demos, indexed_throws = export_demos(args, source, installation, out, work,
+                                                                            update, on_import, on_progress)
     except JobCancelled as error:
         if (out / "index.html").is_file():
             error.gallery = out / "index.html"
@@ -605,6 +693,9 @@ def generate_export(args, output, report, on_import=None, on_progress=None):
             if not any(out.iterdir()):
                 out.rmdir()
     if gallery is None and not failed_demos:
+        if indexed_throws:
+            update("Terminé", f"{indexed_throws} lancers indexés. Aucun nouveau clip à générer.")
+            return ExportResult(None, 0)
         if duplicate_count:
             update("Terminé", "Aucun nouveau clip à générer. Tous les lancers correspondants sont déjà connus.")
             return ExportResult(None, 0)
@@ -632,10 +723,15 @@ def main():
     mode.add_argument("--prepare", action="store_true", help="Prépare les séquences et le radar sans lancer CS2")
     mode.add_argument("--index-only", action="store_true", help="Indexe les lancers et les positions des joueurs sans capture")
     parser.add_argument("--limit", type=int, help="Limite de lancers par carte pour un essai")
+    selection = parser.add_mutually_exclusive_group()
+    selection.add_argument("--all-clips", action="store_true", help="Génère tous les lancers distincts")
+    selection.add_argument("--score-threshold", type=float, help="Seuil minimal du score Potentiel favori (entre 0 et 1)")
     parser.add_argument("--no-open", action="store_true", help="N’ouvre pas le navigateur après export")
     args = parser.parse_args()
     if args.limit is not None and args.limit < 1:
         parser.error("--limit doit être au moins égal à 1.")
+    if args.score_threshold is not None and not 0 < args.score_threshold < 1:
+        parser.error("--score-threshold doit être compris entre 0 et 1, exclus.")
     try:
         if args.index_only:
             return index_throw_metadata(args)

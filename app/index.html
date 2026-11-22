@@ -58,8 +58,17 @@
               <option value="he">HE</option>
             </select>
           </label>
+          <label class="field"><span>Clips à générer</span>
+            <select id="capture-mode">
+              <option value="potential">Potentiels favoris</option>
+              <option value="all">Tous les lancers distincts</option>
+            </select>
+          </label>
           <details>
             <summary>Options de rendu</summary>
+            <label class="field"><span>Seuil Potentiel favori</span>
+              <input id="score-threshold" type="number" min="0.001" max="0.999" step="0.001" placeholder="Auto">
+            </label>
             <label class="field"><span>Nombre maximal de clips par carte</span>
               <input id="limit" type="number" min="1" step="1" placeholder="Tous">
             </label>

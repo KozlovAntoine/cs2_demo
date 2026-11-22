@@ -95,6 +95,8 @@ let heatmapMode = "";
 let heatmapTime = 0;
 let heatmapFrame;
 let heatmapTimeline;
+const heatmapThrowIndex = new Map();
+const heatmapIndexRequests = new Set();
 const reviewPending = new Set();
 let filtered = [];
 let visible = [];
@@ -654,7 +656,11 @@ function paintHeatmap(context, density, peak) {
 }
 
 function heatmapPositions(radar, lower, timed) {
-    return filtered.flatMap((clip) => {
+    const indexed = heatmapThrowIndex.get(currentMatch.map) ?? [];
+    const query = clipSearch?.value.trim().toLocaleLowerCase("fr");
+    const available = !activeStatusFilters.size && !frequencySelect?.value
+        ? [...filtered, ...indexed.filter((throw_) => matchesThrowSelection(throw_, query))] : filtered;
+    return available.flatMap((clip) => {
         const position = radarPosition(clip.impact, radar);
         if (position?.lower !== lower) return [];
         const occurrences = selectedSide ? matchingSideOccurrences(clip) : undefined;
@@ -665,6 +671,26 @@ function heatmapPositions(radar, lower, timed) {
             .filter((time) => Number.isFinite(time) && time >= 0 && time <= roundDuration);
         return times.length ? [{ ...position, times }] : [];
     });
+}
+
+async function loadHeatmapIndex(match) {
+    if (!match.throwIndex || heatmapThrowIndex.has(match.map) || heatmapIndexRequests.has(match.map)) return;
+    heatmapIndexRequests.add(match.map);
+    try {
+        const result = await request(`/api/throw-index?${new URLSearchParams({ map: match.map })}`);
+        heatmapThrowIndex.set(match.map, result.throws);
+        indexThrowFilters();
+        if (currentMatch === match) {
+            renderThrowFilters();
+            renderRounds(roundSelect.value);
+            renderFilters(true);
+            renderClips(undefined, selected);
+        }
+    } catch (error) {
+        if (currentMatch === match) showClipStateError(error);
+    } finally {
+        heatmapIndexRequests.delete(match.map);
+    }
 }
 
 function renderHeatmap(radar, lower) {
@@ -692,6 +718,8 @@ function renderHeatmap(radar, lower) {
         positions = heatmapPositions(radar, lower, false);
     }
     const empty = byId("heatmap-empty");
+    const count = positions.reduce((total, position) => total + position.weight, 0);
+    byId("heatmap-count").textContent = `${count.toLocaleString("fr-FR")} ${count === 1 ? "occurrence" : "occurrences"}`;
     empty.hidden = positions.length > 0;
     if (positions.length) {
         const { density, peak } = heatmapDensity(positions);
@@ -850,6 +878,7 @@ function renderRadar(restoreGroupId) {
     if (showHeatmap) {
         radarSelection = undefined;
         radarRoutes.replaceChildren();
+        loadHeatmapIndex(currentMatch);
         renderHeatmap(radar, lower);
         return;
     }
@@ -1030,18 +1059,22 @@ dismissPotentialButton.addEventListener("click", () => {
     if (isPotential(selected)) reviewClip(dismissPotentialButton, { potentialDismissed: true });
 });
 
+function matchesThrowSelection(clip, query) {
+    return (filter === "all" || clip.kind === filter)
+        && (!roundSelect.value || String(clip.round) === roundSelect.value)
+        && matchesThrowFilters(clip)
+        && (!query || calloutName(clip, currentMatch).toLocaleLowerCase("fr").includes(query));
+}
+
 function renderClips(deletion, playingClip, preferred = selected, restoreGroupId) {
     const frequency = frequencySelect?.value;
     const query = clipSearch?.value.trim().toLocaleLowerCase("fr");
     const potentialOnly = activeStatusFilters.has("potential");
-    filtered = currentMatch.clips.filter((clip) => (filter === "all" || clip.kind === filter)
-        && (!roundSelect.value || String(clip.round) === roundSelect.value)
+    filtered = currentMatch.clips.filter((clip) => matchesThrowSelection(clip, query)
         && (!frequency || throwFrequency(clip)?.category === frequency)
         && (!activeStatusFilters.has("favorites") || clip.favorite)
         && (!activeStatusFilters.has("unwatched") || !clip.watched)
-        && (!potentialOnly || isPotential(clip))
-        && matchesThrowFilters(clip)
-        && (!query || calloutName(clip, currentMatch).toLocaleLowerCase("fr").includes(query)));
+        && (!potentialOnly || isPotential(clip)));
     const compare = clipComparator();
     if (compare) filtered.sort(compare);
     if (clipStateEnabled) byId("clip-sort").textContent = clipSortMode() === "points" ? "Tri par points" : "Tri par round";
@@ -1224,10 +1257,10 @@ function indexThrowFilters() {
     playerOptions.clear();
     const knownNames = new Set();
     for (const match of catalogue.matches) {
-        for (const clip of match.clips) {
+        for (const clip of [...match.clips, ...(heatmapThrowIndex.get(match.map) ?? [])]) {
             const throwers = [...(clip.throwers ?? [])];
             if (clip.player && !throwers.some(({ player }) => player === clip.player)) {
-                throwers.push({ player: clip.player, team: clip.team });
+                throwers.push({ player: clip.player, team: clip.team, steamId: clip.steamId });
             }
             clipThrowers.set(clip, throwers.map(({ player, team, steamId }) => {
                 const teamId = throwFilterKey(team ?? "");
@@ -1369,11 +1402,11 @@ function createThrowFilter(id, multiple, onChange) {
     };
 }
 
-function renderThrowFilters() {
-    if (!teamOptions.has(selectedTeam)) selectedTeam = "";
+function renderThrowFilters(preserveUnknown = false) {
+    if (!preserveUnknown && !teamOptions.has(selectedTeam)) selectedTeam = "";
     const players = [...playerOptions.values()].filter((player) => !selectedTeam || player.teams.has(selectedTeam));
     const allowed = new Set(players.map((player) => player.id));
-    selectedPlayers = new Set([...selectedPlayers].filter((id) => allowed.has(id)));
+    if (!preserveUnknown) selectedPlayers = new Set([...selectedPlayers].filter((id) => allowed.has(id)));
     teamMenu.setOptions(teamOptions.values(), selectedTeam ? [selectedTeam] : []);
     playerMenu.setOptions(players, selectedPlayers);
 }
@@ -1398,7 +1431,8 @@ const playerMenu = library && createThrowFilter("player-filter", true, (ids) => 
 function renderFilters(keepCurrent = false) {
     const bar = byId("types");
     bar.replaceChildren();
-    const available = new Set(currentMatch.clips.map((clip) => clip.kind));
+    const available = new Set([...currentMatch.clips, ...(heatmapThrowIndex.get(currentMatch.map) ?? [])]
+        .map((clip) => clip.kind));
     if (filter !== "all" && !available.has(filter)) {
         if (keepCurrent) available.add(filter);
         else filter = "all";
@@ -1423,7 +1457,8 @@ function renderFilters(keepCurrent = false) {
 }
 
 function renderRounds(current = "") {
-    const rounds = new Set(currentMatch.clips.map((clip) => clip.round));
+    const rounds = new Set([...currentMatch.clips, ...(heatmapThrowIndex.get(currentMatch.map) ?? [])]
+        .map((clip) => clip.round));
     if (current) rounds.add(Number(current));
     roundSelect.replaceChildren(new Option("Tous", ""));
     for (const round of [...rounds].sort((a, b) => a - b)) addOption(roundSelect, round, round);
@@ -1522,7 +1557,8 @@ function restoreLibraryAddress() {
     setThrowSide(params.get("side"));
     selectedTeam = params.get("team") ?? "";
     selectedPlayers = new Set(params.getAll("player"));
-    renderThrowFilters();
+    const map = catalogue.matches[Number(matchSelect.value)];
+    renderThrowFilters(Boolean(params.get("heatmap") && map?.throwIndex && !heatmapThrowIndex.has(map.map)));
     showStatusFilter();
     const heatmap = params.get("heatmap");
     stopHeatmapPlayback();
@@ -1715,7 +1751,7 @@ deleteDialog.addEventListener("close", async () => {
         map.clips = map.clips.filter((item) => item !== clip);
         indexThrowFilters();
         renderThrowFilters();
-        if (!map.clips.length) {
+        if (!map.clips.length && !map.throwIndex) {
             catalogue.matches.splice(catalogue.matches.indexOf(map), 1);
             updateMapOptions(currentMatch?.map);
             if (map === currentMatch) switchMatch();
