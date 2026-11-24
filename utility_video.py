@@ -18,6 +18,7 @@ from capture_progress import CaptureProgress
 from clip_library import CATALOGUE_PREFIX, record_throw_usage, throw_references
 from csdm_capture_pause import shorten_capture_pause
 from demo_imports import demo_fingerprint, read_demo_imports, record_demo_import
+from enemy_pov import assign_enemy_pov
 from favorite_throw_context import extract_context
 from grenade_data import KINDS, UTILITY_KINDS, read_clips
 from job_control import JobCancelled, check_job_cancelled, current_control, job_checkpoint
@@ -34,6 +35,7 @@ PROJECT_CSDM = ROOT / ".local" / "csdm"
 CAPTURE_WORK_MARKER = ".capture-in-progress"
 FALLBACK_DEMO_SOURCE = "esl"
 CALIBRATION = json.loads((ROOT / "radars.json").read_text(encoding="utf-8"))
+CAPTURE_SIZES = {720: (1280, 720), 1080: (1920, 1080)}
 
 
 @dataclass(frozen=True)
@@ -200,13 +202,17 @@ def publish_radar(radar, out):
     return published
 
 
-def create_video_job(demo, clips, tick_rate, job_folder):
+def create_video_job(demo, clips, tick_rate, job_folder, capture_height=720):
     job_folder.mkdir()
     render_folder = job_folder / "video"
     render_folder.mkdir()
     script = job_folder / "camera.js"
     camera_data = [{key: clip[key] for key in ("launchTick", "activationTick", "endTick", "flight", "impact", "yaw")}
                    for clip in clips]
+    for data, clip in zip(camera_data, clips):
+        if pov := clip.get("pov"):
+            # The grenade camera stops when the enemy point of view starts.
+            data["cameraEndTick"] = pov["tick"]
     script.write_text("{\nconst grenadeClips = " + json.dumps(camera_data, separators=(",", ":"), allow_nan=False) + ";\n"
                       + (ROOT / "follow-grenade.js").read_text(encoding="utf-8") + "\n}\n", encoding="utf-8")
     sequences = []
@@ -220,17 +226,20 @@ def create_video_job(demo, clips, tick_rate, job_folder):
             "cl_demo_freecam 0",
             f'mirv_cmd addAtTick {launch} "spec_mode 6"',
         ])
+        cameras = [{"tick": start - tick_rate // 2, "playerSteamId": clip["steamId"], "playerName": clip["player"]}]
+        if pov := clip.get("pov"):
+            cameras.append({"tick": pov["tick"], "playerSteamId": pov["steamId"], "playerName": pov["player"]})
         sequences.append({
             "number": number, "startTick": start, "endTick": clip["endTick"], "cfg": cfg,
-            "playerCameras": [{"tick": start - tick_rate // 2, "playerSteamId": clip["steamId"],
-                               "playerName": clip["player"]}],
+            "playerCameras": cameras,
             "cameras": [], "playersOptions": [], "showXRay": False, "showAssists": True,
             "showOnlyDeathNotices": False, "deathNoticesDuration": 5, "recordAudio": True,
             "playerVoicesEnabled": False,
         })
     config = {
         "demoPath": str(demo), "outputFolderPath": str(render_folder), "recordingSystem": "HLAE",
-        "recordingOutput": "video", "encoderSoftware": "FFmpeg", "width": 1280, "height": 720,
+        "recordingOutput": "video", "encoderSoftware": "FFmpeg",
+        "width": CAPTURE_SIZES[capture_height][0], "height": CAPTURE_SIZES[capture_height][1],
         "framerate": 60, "closeGameAfterRecording": True, "concatenateSequences": False,
         "trueView": False, "sequences": sequences,
         "ffmpegSettings": {"customLocationEnabled": False, "customExecutableLocation": "", "audioBitrate": 192,
@@ -335,7 +344,8 @@ def run_demo_analyzer(installation, demo, folder, **options):
     return FALLBACK_DEMO_SOURCE
 
 
-def analyze_demo(installation, demo, kind, work, *, replay_output=None, contexts=None, keep_demo=False):
+def analyze_demo(installation, demo, kind, work, *, replay_output=None, contexts=None, keep_demo=False,
+                 enemy_pov=False):
     job_checkpoint()
     with tempfile.TemporaryDirectory(dir=work) as temp:
         folder = Path(temp)
@@ -344,6 +354,16 @@ def analyze_demo(installation, demo, kind, work, *, replay_output=None, contexts
         if analysis_source:
             for clip in result[2]:
                 clip["analysisSource"] = analysis_source
+        if enemy_pov and result[2]:
+            try:
+                assigned = assign_enemy_pov(folder, demo, result[2], result[1])
+                if logger := current_job_log():
+                    logger.info("POV ennemie · %d/%d lancers de %s", assigned, len(result[2]), demo.name)
+            except JobCancelled:
+                raise
+            except Exception:
+                if logger := current_job_log():
+                    logger.warning("POV ennemie indisponible pour %s", demo.name, exc_info=True)
         if contexts is not None:
             try:
                 contexts.update(extract_context(folder, demo, {id(clip): clip for clip in result[2]}))
@@ -556,6 +576,49 @@ def release_staged_demo(demo, work):
         demo.unlink(missing_ok=True)
 
 
+def top_key(demo, clip):
+    return demo.name, clip["kind"], clip["steamId"], clip["launchTick"]
+
+
+def score_candidates(args, out, demo, map_name, tick_rate, candidates, occurrences, contexts, update):
+    """Read the throw inputs once per candidate, then score them when the export selects by score."""
+    pending = [clip for clip in candidates if "duration" not in clip]
+    if pending:
+        try:
+            add_throw_inputs(demo, pending, tick_rate)
+        except JobCancelled:
+            raise
+        except Exception as error:
+            if logger := current_job_log():
+                logger.warning("Commandes de lancer indisponibles pour %s", demo.name, exc_info=True)
+            update("Analyse", f"Commandes de lancer indisponibles pour {demo.name} · {error}")
+        for clip in pending:
+            clip["duration"] = round((clip["endTick"] - clip["startTick"]) / tick_rate, 1)
+    if args.prepare or getattr(args, "all_clips", False):
+        return None
+    try:
+        from favorite_suggestions import Throw, train_capture_ranker
+    except ImportError as error:
+        raise ValueError("Le tri par score nécessite NumPy, fourni avec Demoparser.") from error
+    model = getattr(args, "capture_ranker", None)
+    if model is None:
+        try:
+            model = train_capture_ranker(out.parent, getattr(args, "score_threshold", None))
+        except ValueError as error:
+            raise ValueError(f"{error} Sélectionne « Tous les lancers distincts » pour créer des clips.") from error
+        args.capture_ranker = model
+        if not getattr(args, "top_count", None):
+            update("Analyse", f"Seuil de capture · {model.threshold:.3f} · "
+                   f"{model.recovered}/{model.favorites} favoris retrouvés sur les démos de validation.")
+    unscored = [clip for clip in candidates if "potentialScore" not in clip]
+    if unscored:
+        samples = [Throw(map_name, {**clip, "usage": {"demos": 1, "total": len(occurrences[id(clip)])}},
+                         contexts.get(id(clip), {})) for clip in unscored]
+        for clip, score in zip(unscored, model.scores(samples), strict=True):
+            clip["potentialScore"] = float(score)
+    return model
+
+
 def export_demos(args, source, installation, out, work, update, on_import, on_progress):
     if source.suffix.lower() == ".rar":
         update("Extraction", f"Extraction des démos de {source.name}…")
@@ -568,6 +631,45 @@ def export_demos(args, source, installation, out, work, update, on_import, on_pr
     failed_demos = 0
     indexed_throws = 0
     selective = not args.prepare and not getattr(args, "all_clips", False)
+    top_count = getattr(args, "top_count", None) if selective else None
+    enemy_pov = getattr(args, "enemy_pov", False) and not args.prepare
+    analyses = {}
+
+    def analyze(demo):
+        if demo in analyses:
+            return analyses.pop(demo)
+        contexts = {} if selective else None
+        result = analyze_demo(installation, demo, args.type if args.prepare else "all", work,
+                              replay_output=None if args.prepare else out.parent, contexts=contexts,
+                              keep_demo=getattr(args, "keep_demo", False), enemy_pov=enemy_pov)
+        return result, contexts
+
+    if top_count:
+        # Rank every demo of the source first, then capture the best throws wherever they are.
+        ranked = []
+        for number, demo in enumerate(demos, 1):
+            job_checkpoint()
+            update("Classement", f"Démo {number}/{len(demos)} · {demo.name}")
+            result, contexts = analyze(demo)
+            analyses[demo] = (result, contexts)
+            map_name, tick_rate, throws, _ = result
+            previous, removed = throw_references(out.parent, map_name)
+            unique, occurrences = group_throws(throws, previous, removed=removed)
+            candidates = [clip for clip in unique if args.type == "all" or clip["kind"] == args.type]
+            score_candidates(args, out, demo, map_name, tick_rate, candidates, occurrences, contexts, update)
+            ranked.extend((clip["potentialScore"], clip["kind"], top_key(demo, clip)) for clip in candidates)
+        ranked.sort(reverse=True)
+        chosen = []
+        if getattr(args, "top_mixed", False):
+            # Start with the best throw of each utility, then complete the selection by score.
+            for kind in dict.fromkeys(kind for _, kind, _ in ranked):
+                chosen.append(next(entry for entry in ranked if entry[1] == kind))
+            chosen = sorted(chosen, reverse=True)[:top_count]
+        chosen += [entry for entry in ranked if entry not in chosen][:top_count - len(chosen)]
+        args.top_keys = {key for _, _, key in chosen}
+        kinds = Counter(kind for _, kind, _ in chosen)
+        update("Classement", f"Top {len(chosen)} sur {len(ranked)} lancers distincts · "
+               f"{', '.join(f'{name} {count}' for name, count in sorted(kinds.items()))}.")
 
     def finish_demo(demo, fingerprint, demo_member):
         if args.prepare:
@@ -591,11 +693,7 @@ def export_demos(args, source, installation, out, work, update, on_import, on_pr
         fingerprint = demo_fingerprint(demo) if not args.prepare else None
         if fingerprint and fingerprint[0] in imports:
             update("Analyse", f"{demo.name} · Déjà importé.")
-        contexts = {} if selective else None
-        map_name, tick_rate, throws, checksum = analyze_demo(
-            installation, demo, args.type if args.prepare else "all", work,
-            replay_output=None if args.prepare else out.parent, contexts=contexts,
-            keep_demo=getattr(args, "keep_demo", False))
+        (map_name, tick_rate, throws, checksum), contexts = analyze(demo)
         if not throws:
             update("Analyse", f"{map_name} : aucun lancer correspondant.")
             finish_demo(demo, fingerprint, demo_member)
@@ -616,36 +714,15 @@ def export_demos(args, source, installation, out, work, update, on_import, on_pr
         clips = []
         try:
             if candidates:
-                try:
-                    add_throw_inputs(demo, candidates, tick_rate)
-                except JobCancelled:
-                    raise
-                except Exception as error:
-                    if logger := current_job_log():
-                        logger.warning("Commandes de lancer indisponibles pour %s", demo.name, exc_info=True)
-                    update("Analyse", f"Commandes de lancer indisponibles pour {demo.name} · {error}")
-                for clip in candidates:
-                    clip["duration"] = round((clip["endTick"] - clip["startTick"]) / tick_rate, 1)
-                if selective:
-                    try:
-                        from favorite_suggestions import Throw, train_capture_ranker
-                    except ImportError as error:
-                        raise ValueError("Le tri par score nécessite NumPy, fourni avec Demoparser.") from error
-                    model = getattr(args, "capture_ranker", None)
-                    if model is None:
-                        try:
-                            model = train_capture_ranker(out.parent, getattr(args, "score_threshold", None))
-                        except ValueError as error:
-                            raise ValueError(f"{error} Sélectionne « Tous les lancers distincts » pour créer des clips.") from error
-                        args.capture_ranker = model
-                        update("Analyse", f"Seuil de capture · {model.threshold:.3f} · "
-                               f"{model.recovered}/{model.favorites} favoris retrouvés sur les démos de validation.")
-                    samples = [Throw(map_name, {**clip, "usage": {"demos": 1, "total": len(occurrences[id(clip)])}},
-                                     contexts.get(id(clip), {})) for clip in candidates]
-                    for clip, score in zip(candidates, model.scores(samples), strict=True):
-                        clip["potentialScore"] = float(score)
-                        if score > model.threshold:
-                            clips.append(clip)
+                model = score_candidates(args, out, demo, map_name, tick_rate, candidates, occurrences, contexts,
+                                         update)
+                if top_count:
+                    clips = sorted((clip for clip in candidates if top_key(demo, clip) in args.top_keys),
+                                   key=lambda clip: clip["potentialScore"], reverse=True)
+                    update("Analyse", f"{len(clips)} {'lancer retenu' if len(clips) == 1 else 'lancers retenus'} "
+                           f"dans le top {top_count}.")
+                elif selective:
+                    clips = [clip for clip in candidates if clip["potentialScore"] > model.threshold]
                     update("Analyse", f"{len(clips)}/{len(candidates)} lancers distincts au-dessus du seuil "
                            f"de {model.threshold:.3f}.")
                     clips = clips[:args.limit]
@@ -670,7 +747,11 @@ def export_demos(args, source, installation, out, work, update, on_import, on_pr
         update("Analyse", f"{map_name} : {len(clips)} {'clip' if len(clips) == 1 else 'clips'} "
                f"({', '.join(f'{name} {count}' for name, count in sorted(counts.items()))})"
                f", {estimates} fins estimées.")
-        config, render_folder = create_video_job(demo, clips, tick_rate, work / f"map-{map_number}")
+        if enemy_pov:
+            with_pov = sum("pov" in clip for clip in clips)
+            update("Analyse", f"POV de la victime · {with_pov}/{len(clips)} clips.")
+        config, render_folder = create_video_job(demo, clips, tick_rate, work / f"map-{map_number}",
+                                                 getattr(args, "capture_height", 720))
         cancelled = False
         capture_failed = False
         missing = 0
@@ -797,6 +878,12 @@ def main():
     mode.add_argument("--index-only", action="store_true", help="Indexe les lancers et les positions des joueurs sans capture")
     mode.add_argument("--replay-only", action="store_true", help="Crée uniquement les replays 2D, sans clip ni index")
     parser.add_argument("--keep-demo", action="store_true", help="Conserve la démo à côté de son replay")
+    parser.add_argument("--top", type=int, dest="top_count", help="Capture les N meilleurs lancers de la source")
+    parser.add_argument("--mixed", action="store_true", dest="top_mixed",
+                        help="Avec --top, prend au moins un lancer de chaque utilitaire")
+    parser.add_argument("--enemy-pov", action="store_true", help="Termine chaque clip dans la vue de la victime")
+    parser.add_argument("--capture-height", type=int, choices=sorted(CAPTURE_SIZES), default=720,
+                        help="Hauteur de capture en pixels")
     parser.add_argument("--limit", type=int, help="Limite de lancers par carte pour un essai")
     selection = parser.add_mutually_exclusive_group()
     selection.add_argument("--all-clips", action="store_true", help="Génère tous les lancers distincts")

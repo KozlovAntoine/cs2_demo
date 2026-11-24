@@ -71,6 +71,19 @@
             <select id="capture-mode">
               <option value="potential">Potentiels favoris</option>
               <option value="all">Tous les lancers distincts</option>
+              <option value="top">Top N par score</option>
+            </select>
+          </label>
+          <label class="field" id="top-count-field" hidden><span>Nombre de clips (meilleurs scores du fichier)</span>
+            <input id="top-count" type="number" min="1" max="100" step="1" value="5">
+          </label>
+          <label class="checkbox-field" id="top-mixed-field" hidden><input id="top-mixed" type="checkbox" checked>
+            <span>Au moins un clip de chaque utilitaire</span></label>
+          <label class="checkbox-field"><input id="enemy-pov" type="checkbox"> <span>Finir dans la POV de la victime</span></label>
+          <label class="field"><span>Résolution de capture</span>
+            <select id="capture-height">
+              <option value="1080">1080p</option>
+              <option value="720">720p</option>
             </select>
           </label>
           <details>

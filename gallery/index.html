@@ -72,6 +72,7 @@
           </div>
           <div id="clip-actions" class="clip-actions" hidden>
             <button id="portrait-action" type="button">Générer vidéo 9:16</button>
+            <button id="compilation-toggle-clip" type="button" aria-keyshortcuts="C" hidden>+ Compilation</button>
             <button id="delete-clip" class="delete-clip" type="button" hidden>Supprimer</button>
             <button id="favorite-clip" class="favorite-button" type="button" aria-keyshortcuts="F" aria-pressed="false" hidden>☆</button>
             <p id="portrait-status" role="status"></p>
@@ -82,6 +83,7 @@
           <div class="section-bar">
             <h2 id="list-title">Lancers</h2>
             <button id="clip-sort" class="zone-button" type="button" hidden>Tri par round</button>
+            <button id="compilation-open" class="zone-button" type="button" aria-pressed="false" hidden>Compilation 9:16</button>
             <span id="count" aria-live="polite"></span>
           </div>
           <p id="clip-state-error" class="delete-status" role="alert" hidden></p>
@@ -152,6 +154,25 @@
             </button>
           </div>
           <p id="copy-status" role="status"></p>
+        </section>
+        <section id="compilation-panel" class="panel compilation-panel" aria-labelledby="compilation-title" hidden>
+          <div class="compilation-heading">
+            <h2 id="compilation-title">Compilation 9:16</h2>
+            <span id="compilation-count"></span>
+          </div>
+          <div class="compilation-prefill">
+            <label for="compilation-prefill-count">Meilleurs scores</label>
+            <input id="compilation-prefill-count" type="number" min="1" max="30" step="1" value="5">
+            <button id="compilation-prefill" class="zone-button" type="button">Ajouter depuis cette carte</button>
+            <button id="compilation-clear" class="zone-button" type="button">Vider</button>
+          </div>
+          <ol id="compilation-list" class="compilation-list" aria-label="Clips de la compilation"></ol>
+          <p id="compilation-empty" class="compilation-empty">Ajoute le clip affiché avec « + Compilation » sous la vidéo (touche C), ou préremplis la liste par score.</p>
+          <div class="compilation-actions">
+            <button id="compilation-start" class="compilation-start" type="button">Générer la compilation</button>
+            <button id="compilation-folder" class="zone-button" type="button" hidden>Ouvrir le dossier</button>
+          </div>
+          <p id="compilation-status" class="compilation-status" role="status"></p>
         </section>
       </aside>
     </div>

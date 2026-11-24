@@ -456,6 +456,7 @@ function selectClip(clip, autoplay = false) {
     for (const marker of radarRoutes.querySelectorAll("button")) {
         marker.setAttribute("aria-pressed", String(marker.clip === selected));
     }
+    if (compilationState) renderCompilation();
     if (autoplay) syncAddress();
 }
 
@@ -516,9 +517,16 @@ function playClip(clip) {
 function handleLibraryShortcut(event) {
     if (event.defaultPrevented || event.isComposing || event.repeat || event.ctrlKey || event.altKey || event.metaKey) return;
     const key = event.key.toLowerCase();
-    if (key !== "f" && key !== "n" && key !== "b") return;
+    if (key !== "f" && key !== "n" && key !== "b" && key !== "c") return;
     const target = event.target;
     if (target?.isContentEditable || target?.closest?.("input, textarea, select, .throw-filter") || document.querySelector("dialog[open]")) return;
+
+    if (key === "c") {
+        if (!compilationState?.active || !selected?.exportId) return;
+        event.preventDefault();
+        toggleCompilationClip();
+        return;
+    }
 
     if (key === "f") {
         if (favoriteButton.hidden || favoriteButton.disabled) return;
@@ -1182,6 +1190,7 @@ function renderClipPage(page) {
     });
     list.replaceChildren(fragment);
     list.scrollTop = 0;
+    if (compilationState) syncCompilationClip();
 }
 
 for (const [button, direction] of [[previousPage, -1], [nextPage, 1]]) {
@@ -1771,3 +1780,221 @@ deleteDialog.addEventListener("close", async () => {
         deleteButton.disabled = false;
     }
 });
+
+/* ---------- Compilation 9:16 ---------- */
+
+const COMPILATION_STORAGE_KEY = "utilityCompilation";
+const COMPILATION_MAX_CLIPS = 30;
+// `var` keeps these readable from selectClip and renderClipPage before this part of the script has run.
+var compilationState;
+var compilationTimer;
+
+function loadCompilationState() {
+    try {
+        const saved = JSON.parse(localStorage.getItem(COMPILATION_STORAGE_KEY));
+        if (saved && typeof saved.active === "boolean" && Array.isArray(saved.ids)) {
+            return { active: saved.active, ids: saved.ids.filter((id) => typeof id === "string") };
+        }
+    } catch { }
+    return { active: false, ids: [] };
+}
+
+function saveCompilationState() {
+    try {
+        localStorage.setItem(COMPILATION_STORAGE_KEY, JSON.stringify(compilationState));
+    } catch { }
+}
+
+function findLibraryClip(id) {
+    for (const match of catalogue.matches) {
+        const clip = match.clips.find((item) => clipId(item) === id);
+        if (clip) return { clip, match };
+    }
+    return undefined;
+}
+
+function compilationEntries() {
+    return compilationState ? compilationState.ids.map(findLibraryClip).filter(Boolean) : [];
+}
+
+function compilationIndex(clip) {
+    const id = clipId(clip);
+    return compilationState?.active && id ? compilationState.ids.indexOf(id) : -1;
+}
+
+function compilationCallout(clip, match) {
+    const name = calloutName(clip, match);
+    return name === "À définir" ? "" : name;
+}
+
+function syncCompilationClip() {
+    const button = byId("compilation-toggle-clip");
+    if (!button || !compilationState) return;
+    button.hidden = !compilationState.active || !selected?.exportId;
+    const position = compilationIndex(selected);
+    button.textContent = position >= 0 ? `✓ Compilation #${position + 1}` : "+ Compilation";
+    button.setAttribute("aria-pressed", String(position >= 0));
+    for (const row of list.querySelectorAll(".clip-row")) {
+        const index = compilationIndex(visible[Number(row.dataset.index)]);
+        let badge = row.querySelector(".compilation-badge");
+        if (index < 0) {
+            badge?.remove();
+            continue;
+        }
+        if (!badge) {
+            badge = document.createElement("small");
+            badge.className = "compilation-badge";
+            row.querySelector(".clip-callout")?.after(badge);
+        }
+        badge.textContent = `#${index + 1}`;
+    }
+}
+
+function moveCompilationClip(index, offset) {
+    const ids = compilationState.ids;
+    const target = index + offset;
+    if (target < 0 || target >= ids.length) return;
+    [ids[index], ids[target]] = [ids[target], ids[index]];
+    renderCompilation();
+}
+
+function openCompilationClip({ clip, match }) {
+    const index = catalogue.matches.indexOf(match);
+    if (String(index) !== matchSelect.value) {
+        matchSelect.value = index;
+        switchMatch({ selectedId: clipId(clip) });
+    }
+    if (selected !== clip) playClip(clip);
+    syncAddress();
+    renderCompilation();
+}
+
+function renderCompilation() {
+    if (!compilationState) return;
+    const { active } = compilationState;
+    const entries = compilationEntries();
+    // Clips deleted from the library leave the selection.
+    compilationState.ids = entries.map(({ clip }) => clipId(clip));
+    saveCompilationState();
+    byId("compilation-open").setAttribute("aria-pressed", String(active));
+    byId("compilation-panel").hidden = !active;
+    byId("compilation-count").textContent = `${entries.length} ${entries.length === 1 ? "clip" : "clips"}`;
+    byId("compilation-empty").hidden = entries.length > 0;
+    byId("compilation-list").replaceChildren(...entries.map(({ clip, match }, index) => {
+        const item = document.createElement("li");
+        item.style.setProperty("--tint", kinds[clip.kind].color);
+        const open = document.createElement("button");
+        open.type = "button";
+        open.className = "compilation-clip";
+        const title = document.createElement("strong");
+        title.textContent = compilationCallout(clip, match) || "Zone à définir";
+        const details = document.createElement("small");
+        details.textContent = `${mapLabel(match.map)} · ${kinds[clip.kind].label} · ${clip.player}`;
+        open.append(dot(), title, details);
+        open.setAttribute("aria-current", String(clip === selected));
+        open.addEventListener("click", () => openCompilationClip({ clip, match }));
+        const controls = document.createElement("span");
+        controls.className = "compilation-item-actions";
+        for (const [label, name, action, disabled] of [
+            ["↑", "Monter", () => moveCompilationClip(index, -1), index === 0],
+            ["↓", "Descendre", () => moveCompilationClip(index, 1), index === entries.length - 1],
+            ["✕", "Retirer", () => { compilationState.ids.splice(index, 1); renderCompilation(); }, false],
+        ]) {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "zone-button";
+            button.textContent = label;
+            button.title = `${name} · ${clip.player}`;
+            button.setAttribute("aria-label", button.title);
+            button.disabled = disabled;
+            button.addEventListener("click", action);
+            controls.append(button);
+        }
+        item.append(open, controls);
+        return item;
+    }));
+    const start = byId("compilation-start");
+    const tooMany = entries.length > COMPILATION_MAX_CLIPS;
+    start.disabled = !entries.length || tooMany || start.dataset.busy === "true";
+    start.textContent = entries.length ? `Générer la compilation (${entries.length})` : "Générer la compilation";
+    if (tooMany) byId("compilation-status").textContent = `${COMPILATION_MAX_CLIPS} clips au maximum par compilation.`;
+    syncCompilationClip();
+}
+
+function toggleCompilationClip(clip = selected) {
+    const id = clipId(clip);
+    if (!compilationState?.active || !id) return;
+    const index = compilationState.ids.indexOf(id);
+    if (index >= 0) compilationState.ids.splice(index, 1);
+    else compilationState.ids.push(id);
+    renderCompilation();
+}
+
+function showCompilationJob(state) {
+    byId("compilation-start").dataset.busy = String(Boolean(state?.busy));
+    byId("compilation-folder").hidden = !state?.file;
+    byId("compilation-status").textContent = state?.error ? state.error
+        : state?.running ? state.phase || "Compilation en cours…"
+        : state?.file ? `Terminé · ${state.file}`
+        : state?.busy ? "Un autre traitement est en cours." : "";
+    renderCompilation();
+    clearTimeout(compilationTimer);
+    if (compilationState.active && (state?.running || state?.busy)) {
+        compilationTimer = setTimeout(refreshCompilationJob, 1500);
+    }
+}
+
+async function refreshCompilationJob() {
+    try {
+        showCompilationJob(await request("/api/compilation"));
+    } catch (error) {
+        byId("compilation-status").textContent = error.message;
+    }
+}
+
+compilationState = loadCompilationState();
+byId("compilation-open").hidden = !portrait;
+if (!portrait) compilationState.active = false;
+byId("compilation-open").addEventListener("click", () => {
+    compilationState.active = !compilationState.active;
+    renderCompilation();
+    if (compilationState.active) refreshCompilationJob();
+});
+byId("compilation-toggle-clip").addEventListener("click", () => toggleCompilationClip());
+byId("compilation-clear").addEventListener("click", () => {
+    compilationState.ids = [];
+    renderCompilation();
+});
+byId("compilation-prefill").addEventListener("click", () => {
+    const count = Math.max(1, Math.min(COMPILATION_MAX_CLIPS, byId("compilation-prefill-count").valueAsNumber || 1));
+    const best = visible.filter((clip) => clip.exportId && !compilationState.ids.includes(clipId(clip)))
+        .sort((a, b) => (b.potentialScore ?? 0) - (a.potentialScore ?? 0)).slice(0, count);
+    compilationState.ids.push(...best.map(clipId));
+    renderCompilation();
+});
+byId("compilation-start").addEventListener("click", async () => {
+    const clips = compilationEntries().map(({ clip, match }) => ({
+        ...clipReference(clip), title: compilationCallout(clip, match),
+    }));
+    byId("compilation-start").dataset.busy = "true";
+    byId("compilation-status").textContent = "Démarrage…";
+    renderCompilation();
+    try {
+        await request("/api/compilation", { clips });
+    } catch (error) {
+        byId("compilation-start").dataset.busy = "false";
+        byId("compilation-status").textContent = error.message;
+        renderCompilation();
+        return;
+    }
+    refreshCompilationJob();
+});
+byId("compilation-folder").addEventListener("click", async () => {
+    try {
+        await request("/api/open-compilations", {});
+    } catch (error) {
+        byId("compilation-status").textContent = error.message;
+    }
+});
+renderCompilation();
+if (compilationState.active) refreshCompilationJob();

@@ -36,6 +36,13 @@ CS2 Utilities is a local, browser-based application for turning Counter-Strike 2
 - Use fullscreen library view for a larger workspace.
 - Preserve the current map, clip, radar group, and filters in the URL. Browser Back and Forward restore navigation state; copied links work on the same PC.
 
+## Compilations and enemy POV
+
+- Capture the top N throws by score of a demo or archive, ranked across every demo of the archive.
+- Optionally end each clip in the victim's point of view: the most blinded enemy for a flash, the most damaged for an HE or incendiary, otherwise the nearest living enemy.
+- Capture new clips in 1080p or 720p.
+- Build a 1080 × 1920 compilation from the clips shown in the library, ordered by score or by the list: full game frame over a blurred background, with map, utility, callout, thrower, team, throw inputs, and a POV badge.
+
 ## Round replays
 
 - List every demo with recorded player positions, including earlier imports, with match score, map, date, rounds, and disk usage.

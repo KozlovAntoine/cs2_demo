@@ -493,6 +493,9 @@ byId("generate").addEventListener("submit", async (event) => {
         const { job } = await request("/api/generate", {
             selection: selected.id, kind: byId("kind").value, demo: demo.value || null,
             mode: importMode.value, keepDemo: keepDemo.checked,
+            topCount: captureMode.value === "top" ? byId("top-count").valueAsNumber : null,
+            topMixed: captureMode.value === "top" && byId("top-mixed").checked,
+            enemyPov: byId("enemy-pov").checked, captureHeight: Number(byId("capture-height").value),
             limit: limit.value ? Number(limit.value) : null, captureMode: captureMode.value,
             scoreThreshold: scoreThreshold.disabled || !scoreThreshold.value ? null : scoreThreshold.valueAsNumber,
         });
@@ -505,7 +508,8 @@ byId("generate").addEventListener("submit", async (event) => {
     }
 });
 captureMode.addEventListener("change", () => {
-    scoreThreshold.disabled = captureMode.value === "all";
+    scoreThreshold.disabled = captureMode.value !== "potential";
+    byId("top-count-field").hidden = byId("top-mixed-field").hidden = captureMode.value !== "top";
 });
 
 function applyImportMode() {
@@ -585,7 +589,7 @@ async function poll() {
         byId("library-notice").hidden = libraryAvailable;
         selectSource(selection);
         displayJob(job);
-        if (job.state === "running" && !job.portrait) awaitingJob = job.id;
+        if (job.state === "running" && !job.portrait && !job.compilation) awaitingJob = job.id;
         if (["complete", "error", "cancelled"].includes(job.state) && awaitingJob === job.id) {
             awaitingJob = null;
             if (job.state === "complete" && job.mode === "replay") {

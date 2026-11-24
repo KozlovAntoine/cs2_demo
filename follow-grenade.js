@@ -19,7 +19,8 @@ if (!globalThis.csUtilityVideo) {
 
     mirv.events.cViewRenderSetupView.on("cs-utility-video", () => {
         const tick = mirv.getDemoTick();
-        if (!clip || !Number.isFinite(tick) || tick < clip.launchTick || tick > clip.endTick) return;
+        const cameraEnd = clip?.cameraEndTick ?? clip?.endTick;
+        if (!clip || !Number.isFinite(tick) || tick < clip.launchTick || tick >= cameraEnd) return;
 
         const [x, y, z] = positionAt(clip.flight, tick);
         const [behindX, behindY] = positionAt(clip.flight, Math.min(tick, clip.activationTick) - 5);

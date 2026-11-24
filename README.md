@@ -77,6 +77,20 @@ Avec Demoparser installé, l’analyse écrit aussi `exports/.round-replays/<ide
 
 Dans **Joueurs**, sélectionne une carte puis **Rounds 1 à 12** pour superposer les premières mi-temps, ou sélectionne un numéro de round. La heatmap montre les positions des joueurs encore en vie sur les **0,5 dernières secondes**. Les T sont en orange et les CT en bleu. Tu peux lire le déroulé ou déplacer le curseur avec le compte à rebours de **1:55 à 0:00**.
 
+## Erreur HLAE après une mise à jour de CS2
+
+Si CS2 affiche une erreur `AfxHookSource2` comme **Failed to detour DeathMsg functions**, la mise à jour du jeu n’est plus compatible avec HLAE. L’équipe advancedfx publie généralement une correction en quelques heures. Ferme CS2, puis double-clique sur `Mettre à jour HLAE.cmd`. Le script installe la dernière version publiée dans `.local/hlae-<version>`, garde l’ancienne et règle CS Demo Manager sur la nouvelle. Une copie des réglages précédents est enregistrée dans `~/.csdm/`. `python update_hlae.py --check` affiche les versions sans rien installer.
+
+## Compilations 9:16 et POV de la victime
+
+Dans **Nouvel export**, **Top N par score** capture les N lancers distincts les mieux classés de chaque fichier sélectionné. Pour une archive, le classement porte sur toutes ses démos. **Finir dans la POV de la victime** bascule la caméra sur un ennemi juste avant l’activation de la grenade, seulement s’il se trouve à moins de 10 mètres de l’impact. Parmi ces ennemis, le clip prend le plus aveuglé pour une flash, celui qui prend le plus de dégâts pour une HE ou une molotov, sinon le plus proche. Sans ennemi à proximité, le clip reste sur la grenade. La constante `NEAR_DISTANCE` dans `enemy_pov.py` règle cette distance en unités du jeu. **Résolution de capture** règle la taille des nouveaux clips, en 1080p par défaut.
+
+```powershell
+python utility_video.py --top 5 --enemy-pov --capture-height 1080 "match.rar"
+```
+
+Dans la vidéothèque, **Compilation 9:16** active le mode compilation. La liste de la compilation s’affiche sous **Reproduire ce lancer**. **+ Compilation** sous la vidéo, ou la touche **C**, ajoute ou retire le clip affiché. **Ajouter depuis cette carte** ajoute les meilleurs scores parmi les lancers affichés. Les flèches changent l’ordre, **✕** retire un clip, et un clic sur un clip l’ouvre. La sélection reste quand tu changes de carte ou recharges la page. **Générer la compilation** assemble jusqu’à 30 clips dans l’ordre de la liste. La vidéo fait 1080 × 1920 : l’image du jeu reste entière au centre, sur un fond flouté. Les textes de la vidéo sont en anglais. Le bandeau du haut affiche la carte, l’utilitaire et la zone. Celui du bas affiche le joueur, son équipe et les commandes du lancer. Un badge **ENEMY POV** apparaît quand la caméra passe sur la victime, avec la durée d’aveuglement ou les dégâts subis. Les compilations sont enregistrées dans `exports/compilations/`, et **Ouvrir le dossier** y donne accès.
+
 ## Replays 2D
 
 **Replays** liste toutes les démos dont les positions ont été relevées, y compris les imports précédents. Clique sur un match pour revoir ses rounds sur le radar : joueurs et orientation, points de vie, grenades en vol, smokes et molotovs pendant leur durée réelle, flashes, HE, kills et bombe. **Espace** lance ou met en pause, **←** et **→** reculent ou avancent de 5 secondes, **↑** et **↓** changent de round. Un clic sur un kill revient 3 secondes avant. La molette zoome et le glisser déplace la carte.

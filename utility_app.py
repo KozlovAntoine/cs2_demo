@@ -26,12 +26,13 @@ from clip_library import (
     CATALOGUE_PREFIX, clip_paths, delete_clip, existing_galleries, export_url, find_library_clip, library_catalogue,
     playable_matches, published_catalogues, read_catalogue, set_clip_state,
 )
+from compilation_video import COMPILATION_FOLDER, MAX_CLIPS, generate_compilation
 from portrait_video import existing_portrait, generate_portrait, portrait_folder
 from replay_library import delete_replay, list_replays, load_replay, replay_name, saved_demo, storage_usage
 from round_replay import FIRST_HALF_ROUNDS, player_heatmap, replay_index
 from throw_index import unrendered_throws
 from utility_video import (
-    CALIBRATION, ROOT, find_csdm, generate, generate_export, import_replays, inspect_demo_source, radar_layout,
+    CALIBRATION, CAPTURE_SIZES, ROOT, find_csdm, generate, generate_export, import_replays, inspect_demo_source, radar_layout,
     reserve_export, run,
 )
 
@@ -252,8 +253,16 @@ class App:
                     raise ValueError("Cette démo ne fait pas partie de l’archive sélectionnée.")
             if limit is not None and (type(limit) is not int or limit < 1):
                 raise ValueError("La limite de clips doit être un entier supérieur à zéro.")
-            if capture_mode not in ("potential", "all"):
+            if capture_mode not in ("potential", "all", "top"):
                 raise ValueError("Mode de capture invalide.")
+            top_count = data.get("topCount") if capture_mode == "top" else None
+            if capture_mode == "top" and (type(top_count) is not int or not 1 <= top_count <= 100):
+                raise ValueError("Le nombre de clips du top doit être compris entre 1 et 100.")
+            top_mixed = data.get("topMixed", False) is True and capture_mode == "top"
+            enemy_pov = data.get("enemyPov", False)
+            capture_height = data.get("captureHeight", 720)
+            if type(enemy_pov) is not bool or capture_height not in CAPTURE_SIZES:
+                raise ValueError("Options de capture invalides.")
             if score_threshold is not None and (capture_mode != "potential"
                                                 or type(score_threshold) not in (float, int)
                                                 or not 0 < score_threshold < 1):
@@ -274,7 +283,9 @@ class App:
             options = argparse.Namespace(demo=paths[0], output=self.output, csdm=self.csdm,
                                          type=kind, map=None, demo_member=member, limit=limit,
                                          prepare=False, no_open=True, all_clips=capture_mode == "all",
-                                         score_threshold=score_threshold, keep_demo=keep_demo)
+                                         score_threshold=score_threshold, keep_demo=keep_demo,
+                                         top_count=top_count, top_mixed=top_mixed, enemy_pov=enemy_pov,
+                                         capture_height=capture_height)
 
             def render_export(report):
                 if len(paths) == 1:
@@ -288,6 +299,9 @@ class App:
             description = f"Sources · {', '.join(path.name for path in paths)}\n"
             description += f"Utilitaire · {kind} | Limite · {limit if limit is not None else 'aucune'}"
             description += f" | Démo conservée · {'oui' if keep_demo else 'non'}"
+            description += f" | Capture · {capture_height}p | POV victime · {'oui' if enemy_pov else 'non'}"
+            if top_count:
+                description += f" | Top · {top_count}{' varié' if top_mixed else ''}"
             if capture_mode == "potential":
                 description += f" | Seuil Potentiel favori · {score_threshold if score_threshold is not None else 'auto'}"
             if member is not None:
@@ -397,6 +411,43 @@ class App:
             self.start_job(render_portrait, log_kind="portrait",
                            description=f"Clip 9:16 · {clip_file.name} | Carte · {map_name}", portrait=reference)
             return {"exists": False}
+
+    def compilation_status(self):
+        with self.lock:
+            mine = self.job.get("compilation") is True
+            running = mine and self.job["state"] == "running"
+            return {"busy": self.busy(), "running": running, "phase": self.job.get("messages", [""])[-1] if running else None,
+                    "error": self.job.get("error") if mine else None,
+                    "file": self.job.get("file") if mine and self.job["state"] == "complete" else None}
+
+    def start_compilation(self, data):
+        entries = data.get("clips")
+        if not isinstance(entries, list) or not 1 <= len(entries) <= MAX_CLIPS:
+            raise ValueError(f"Choisis entre 1 et {MAX_CLIPS} clips.")
+        with self.lock:
+            if self.busy():
+                raise ValueError("Un export ou une sélection est déjà en cours.")
+            items = []
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    raise ValueError("Clip invalide.")
+                clip_file, map_name, clip = find_library_clip(self.output, entry.get("exportId"), entry.get("file"))
+                title = entry.get("title")
+                title = title.strip()[:40] if isinstance(title, str) and title.strip() else "Lineup"
+                items.append({"file": clip_file, "clip": clip, "map": map_name, "title": title})
+
+            def render_compilation(report):
+                target = generate_compilation(self.output, items, report)
+                return {"file": target.name}
+
+            return self.start_job(render_compilation, log_kind="compilation", controllable=True,
+                                  description=f"Compilation 9:16 · {len(items)} clips", compilation=True)
+
+    def open_compilations(self):
+        folder = self.output / COMPILATION_FOLDER
+        if not folder.is_dir():
+            raise ValueError("Aucune compilation dans la vidéothèque.")
+        os.startfile(folder, "explore")
 
     def open_portrait(self, reference):
         with self.lock:
@@ -613,6 +664,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.json_response(record, allow_gzip=True)
             except (ValueError, OSError, EOFError, KeyError) as error:
                 self.json_response({"error": error_message(error)}, HTTPStatus.BAD_REQUEST)
+        elif path == "/api/compilation":
+            self.json_response(app.compilation_status())
         elif path == "/api/portrait":
             data = {key: values[0] for key, values in parse_qs(url.query).items()}
             try:
@@ -691,7 +744,7 @@ class Handler(BaseHTTPRequestHandler):
         app = self.server.app
         try:
             length = int(self.headers.get("Content-Length", "0"))
-            if self.headers.get_content_type() != "application/json" or not 0 < length <= 8192:
+            if self.headers.get_content_type() != "application/json" or not 0 < length <= 32768:
                 raise ValueError("Requête invalide.")
             data = json.loads(self.rfile.read(length))
             if not isinstance(data, dict):
@@ -722,6 +775,11 @@ class Handler(BaseHTTPRequestHandler):
                 self.json_response(app.remove_replay(data))
             elif self.path == "/api/replays/reanalyze":
                 self.json_response({"job": app.reanalyze_replay(data)}, HTTPStatus.ACCEPTED)
+            elif self.path == "/api/compilation":
+                self.json_response({"job": app.start_compilation(data)}, HTTPStatus.ACCEPTED)
+            elif self.path == "/api/open-compilations":
+                app.open_compilations()
+                self.json_response({"opened": True})
             elif self.path == "/api/delete-clip":
                 app.remove(clip_reference(data))
                 self.json_response({"deleted": True})
