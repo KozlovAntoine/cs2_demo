@@ -27,10 +27,12 @@ from clip_library import (
     playable_matches, published_catalogues, read_catalogue, set_clip_state,
 )
 from portrait_video import existing_portrait, generate_portrait, portrait_folder
+from replay_library import delete_replay, list_replays, load_replay, replay_name, saved_demo, storage_usage
 from round_replay import FIRST_HALF_ROUNDS, player_heatmap, replay_index
 from throw_index import unrendered_throws
 from utility_video import (
-    CALIBRATION, ROOT, find_csdm, generate, generate_export, inspect_demo_source, radar_layout, reserve_export, run,
+    CALIBRATION, ROOT, find_csdm, generate, generate_export, import_replays, inspect_demo_source, radar_layout,
+    reserve_export, run,
 )
 
 
@@ -39,6 +41,7 @@ STATIC = {"/": "index.html", "/app.css": "app.css", "/app.js": "app.js", "/utili
 GALLERY_ASSETS = {"index.html", "gallery.css", "gallery.js", "callouts.js", "InterVariable.woff2", "Inter-OFL.txt"}
 GALLERY_FILES = GALLERY_ASSETS | {"catalogue.js"}
 PLAYER_ASSETS = {"index.html", "players.css", "players.js"}
+REPLAY_ASSETS = {"index.html", "replay.css", "replay.js"}
 CONTENT_POLICY = ("default-src 'self'; style-src 'self' 'unsafe-inline'; frame-ancestors 'self'; "
                   "object-src 'none'; base-uri 'none'; form-action 'self'")
 QUEUE_FINISHED = {"complete", "partial", "skipped", "cancelled", "error"}
@@ -111,6 +114,64 @@ class App:
                 maps.append({"map": name, "radar": radar, "zones": read_zones(self.output, name)})
         return maps
 
+    def map_radar(self, name):
+        radar = radar_layout(name, self.radar_installation())
+        if radar:
+            for level in ("upper", "lower"):
+                if radar[level]:
+                    radar[level] = f"/callout-radars/{radar[level].name}"
+            return radar
+        for folder, _, catalogue in published_catalogues(self.output):
+            for match in catalogue["matches"]:
+                radar = match.get("radar")
+                if match["map"] == name and radar:
+                    base = export_url(folder)
+                    return {**radar, "upper": f"{base}/{radar['upper']}",
+                            "lower": f"{base}/{radar['lower']}" if radar.get("lower") else None}
+        return None
+
+    def replays(self):
+        with self.lock:
+            replays = list_replays(self.output)
+            running = self.job.get("replay") if self.job["state"] == "running" else None
+            busy = self.busy()
+        return {"replays": replays, "usage": storage_usage(replays), "busy": busy, "running": running}
+
+    def replay(self, checksum):
+        with self.lock:
+            record = load_replay(self.output, checksum)
+            try:
+                record["zones"] = read_zones(self.output, record["map"]) if record["map"] in CALIBRATION else []
+            except (ValueError, OSError):
+                record["zones"] = []
+        record["radar"] = self.map_radar(record["map"])
+        return record
+
+    def remove_replay(self, data):
+        with self.lock:
+            if self.busy():
+                raise ValueError("Attends la fin du traitement en cours avant de supprimer un replay.")
+            return delete_replay(self.output, data.get("id"), data.get("scope"))
+
+    def reanalyze_replay(self, data):
+        with self.lock:
+            if self.busy():
+                raise ValueError("Un export ou une sélection est déjà en cours.")
+            checksum = data.get("id")
+            demo = saved_demo(self.output, checksum)
+            name = replay_name(self.output, checksum)
+
+            def render_replay(report):
+                completed, failures = import_replays([demo], self.output, find_csdm(self.csdm), keep_demo=True,
+                                                     update=report, names={demo: name})
+                if failures or not completed:
+                    raise ValueError("La mise à jour du replay a échoué. Consulte le journal pour les détails.")
+                report("Terminé", "Replay mis à jour.")
+                return {}
+
+            return self.start_job(render_replay, log_kind="replay", description=f"Mise à jour du replay · {demo.name}",
+                                  replay=checksum)
+
     def player_maps(self):
         maps = {}
         missing = {}
@@ -176,10 +237,14 @@ class App:
                 raise ValueError("Choisis d’abord une démo à exporter.")
             kind = data.get("kind")
             member = data.get("demo")
+            mode = data.get("mode", "clips")
+            keep_demo = data.get("keepDemo", True)
+            if mode not in ("clips", "replay") or type(keep_demo) is not bool:
+                raise ValueError("Mode d’import invalide.")
             limit = data.get("limit")
             capture_mode = data.get("captureMode", "potential")
             score_threshold = data.get("scoreThreshold")
-            if not isinstance(kind, str) or (kind != "all" and kind not in UTILITY_KINDS):
+            if mode == "clips" and (not isinstance(kind, str) or (kind != "all" and kind not in UTILITY_KINDS)):
                 raise ValueError("Type d’utilitaire invalide.")
             if member is not None:
                 sources = self.selection["sources"]
@@ -194,10 +259,6 @@ class App:
                                                 or not 0 < score_threshold < 1):
                 raise ValueError("Le seuil doit être compris entre 0 et 1, exclus.")
             paths = self.selected_paths
-            options = argparse.Namespace(demo=paths[0], output=self.output, csdm=self.csdm,
-                                         type=kind, map=None, demo_member=member, limit=limit,
-                                         prepare=False, no_open=True, all_clips=capture_mode == "all",
-                                         score_threshold=score_threshold)
             queue = {
                 (path, entry["member"]): {
                     "name": entry["member"].rsplit("/", 1)[-1] if entry["member"] else path.name,
@@ -208,6 +269,12 @@ class App:
                 for entry in source["demos"] or [{"member": None}]
                 if member is None or entry["member"] == member
             }
+            if mode == "replay":
+                return self.start_replay_import(paths, member, keep_demo, queue)
+            options = argparse.Namespace(demo=paths[0], output=self.output, csdm=self.csdm,
+                                         type=kind, map=None, demo_member=member, limit=limit,
+                                         prepare=False, no_open=True, all_clips=capture_mode == "all",
+                                         score_threshold=score_threshold, keep_demo=keep_demo)
 
             def render_export(report):
                 if len(paths) == 1:
@@ -220,12 +287,34 @@ class App:
 
             description = f"Sources · {', '.join(path.name for path in paths)}\n"
             description += f"Utilitaire · {kind} | Limite · {limit if limit is not None else 'aucune'}"
+            description += f" | Démo conservée · {'oui' if keep_demo else 'non'}"
             if capture_mode == "potential":
                 description += f" | Seuil Potentiel favori · {score_threshold if score_threshold is not None else 'auto'}"
             if member is not None:
                 description += f"\nDémo sélectionnée dans l’archive · {member}"
             return self.start_job(render_export, log_kind="export", description=description, controllable=True,
                                   queue=queue)
+
+    def start_replay_import(self, paths, member, keep_demo, queue):
+        def render_replays(report):
+            completed, failures = import_replays(paths, self.output, find_csdm(self.csdm),
+                                                 members=(member,) if member else (), keep_demo=keep_demo,
+                                                 update=report, on_progress=self.update_queue)
+            label = "replay créé" if completed == 1 else "replays créés"
+            if not completed:
+                raise ValueError("Aucun replay créé. Consulte le journal pour les détails.")
+            if failures:
+                report("Terminé avec erreurs", f"{completed} {label} · {failures} en erreur.")
+            else:
+                report("Terminé", f"{completed} {label}.")
+            return {"failedFiles": failures, "replays": completed}
+
+        description = f"Replays uniquement · {', '.join(path.name for path in paths)}"
+        description += f" | Démo conservée · {'oui' if keep_demo else 'non'}"
+        if member is not None:
+            description += f"\nDémo sélectionnée dans l’archive · {member}"
+        return self.start_job(render_replays, log_kind="replay", description=description, controllable=True,
+                              queue=queue, mode="replay")
 
     def mark_demo_imported(self, path, member):
         with self.lock:
@@ -513,6 +602,17 @@ class Handler(BaseHTTPRequestHandler):
                 self.json_response(player_heatmap(records, radar, int(number)), allow_gzip=True)
             except (ValueError, OSError) as error:
                 self.json_response({"error": error_message(error)}, HTTPStatus.BAD_REQUEST)
+        elif path == "/api/replays":
+            try:
+                self.json_response(app.replays())
+            except (ValueError, OSError) as error:
+                self.json_response({"error": error_message(error)}, HTTPStatus.BAD_REQUEST)
+        elif path == "/api/replay":
+            try:
+                record = app.replay(parse_qs(url.query).get("id", [""])[0])
+                self.json_response(record, allow_gzip=True)
+            except (ValueError, OSError, EOFError, KeyError) as error:
+                self.json_response({"error": error_message(error)}, HTTPStatus.BAD_REQUEST)
         elif path == "/api/portrait":
             data = {key: values[0] for key, values in parse_qs(url.query).items()}
             try:
@@ -560,6 +660,8 @@ class Handler(BaseHTTPRequestHandler):
                 file = ROOT / "gallery" / path.removeprefix("/library/")
             elif path.startswith("/players/") and path.removeprefix("/players/") in PLAYER_ASSETS:
                 file = ROOT / "players" / path.removeprefix("/players/")
+            elif path.startswith("/replay/") and path.removeprefix("/replay/") in REPLAY_ASSETS:
+                file = ROOT / "replay" / path.removeprefix("/replay/")
             elif path.startswith("/callout-radars/"):
                 filename = path.removeprefix("/callout-radars/")
                 name = filename.removesuffix(".png").removesuffix("_lower")
@@ -616,6 +718,10 @@ class Handler(BaseHTTPRequestHandler):
                 with app.lock:
                     result = change_zone(app.output, name, data)
                 self.json_response(result)
+            elif self.path == "/api/replays/delete":
+                self.json_response(app.remove_replay(data))
+            elif self.path == "/api/replays/reanalyze":
+                self.json_response({"job": app.reanalyze_replay(data)}, HTTPStatus.ACCEPTED)
             elif self.path == "/api/delete-clip":
                 app.remove(clip_reference(data))
                 self.json_response({"deleted": True})

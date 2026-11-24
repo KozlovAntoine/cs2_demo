@@ -77,6 +77,20 @@ Avec Demoparser installé, l’analyse écrit aussi `exports/.round-replays/<ide
 
 Dans **Joueurs**, sélectionne une carte puis **Rounds 1 à 12** pour superposer les premières mi-temps, ou sélectionne un numéro de round. La heatmap montre les positions des joueurs encore en vie sur les **0,5 dernières secondes**. Les T sont en orange et les CT en bleu. Tu peux lire le déroulé ou déplacer le curseur avec le compte à rebours de **1:55 à 0:00**.
 
+## Replays 2D
+
+**Replays** liste toutes les démos dont les positions ont été relevées, y compris les imports précédents. Clique sur un match pour revoir ses rounds sur le radar : joueurs et orientation, points de vie, grenades en vol, smokes et molotovs pendant leur durée réelle, flashes, HE, kills et bombe. **Espace** lance ou met en pause, **←** et **→** reculent ou avancent de 5 secondes, **↑** et **↓** changent de round. Un clic sur un kill revient 3 secondes avant. La molette zoome et le glisser déplace la carte.
+
+Dans **Nouvel export**, le **Type d’import** **Replay uniquement (sans CS2)** crée les replays sans générer de clip. La vidéothèque, l’index des lancers et la liste des démos déjà importées ne changent pas. Une archive BO3 prend moins d’une minute. Demoparser (étape 6) est requis.
+
+**Conserver la démo pour le replay** garde chaque `.dem` analysé dans `exports/.round-replays/<identifiant>.dem`. Une archive `.rar` est conservée démo par démo. Sur le même disque, la copie est un lien physique et n’occupe pas de place tant que l’original existe. La liste affiche l’espace de chaque replay. **Supprimer la démo** libère la démo en gardant le replay. **Supprimer** retire aussi le replay et ses positions de la heatmap Joueurs. Les clips ne changent pas.
+
+Les replays créés avant cette version sont marqués **Simplifié** : positions uniquement, grenades en ligne droite reprises de l’index des lancers, sans kills ni bombe. Si leur démo est conservée, **Mettre à jour** les réanalyse. Sinon, réimporte la démo en **Replay uniquement**. La commande accepte aussi `--replay-only` et `--keep-demo`.
+
+```powershell
+python utility_video.py --replay-only --keep-demo "match-1.rar" "match-2.dem"
+```
+
 Les copies de travail des démos et les fichiers de capture intermédiaires sont nettoyés automatiquement après chaque capture et en cas d’échec. Si l’application ou le PC s’arrête avant le nettoyage, le prochain export supprime les fichiers temporaires signalés par l’export interrompu. Les `.dem` ou `.rar` d’origine servent aux prochains exports. Les clips restent lisibles depuis leurs MP4.
 
 Dans la vidéothèque, sélectionne un lancer et clique sur **Générer vidéo 9:16**. FFmpeg recadre le centre du MP4 existant en 720 × 1280 en conservant les proportions et le son. Après le rendu, **Ouvrir le dossier** donne accès au MP4. Le nom contient le joueur, la carte, le type d’utilitaire et la date du rendu au format `AAAA-MM-JJ HH-MM`.

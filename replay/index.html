@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Replays · Utilitaires CS2</title>
+  <link rel="stylesheet" href="/library/gallery.css">
+  <link rel="stylesheet" href="/replay/replay.css">
+  <script defer src="/library/callouts.js"></script>
+  <script defer src="/replay/replay.js"></script>
+</head>
+<body>
+  <svg class="visually-hidden" aria-hidden="true" focusable="false">
+    <symbol id="icon-skull" viewBox="0 0 16 16">
+      <path fill-rule="evenodd" d="M8 1.2C4.3 1.2 1.8 3.7 1.8 7c0 2 .9 3.5 2.4 4.3v2a1.2 1.2 0 0 0 1.2 1.2h5.2a1.2 1.2 0 0 0 1.2-1.2v-2c1.5-.8 2.4-2.3 2.4-4.3 0-3.3-2.5-5.8-6.2-5.8ZM5.6 5.9a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3Zm4.8 0a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3ZM8 9.6l-1 1.6h2Zm-2 3.1v1h1v-1Zm3 0v1h1v-1Z"/>
+    </symbol>
+    <symbol id="icon-smoke" viewBox="0 0 16 16">
+      <path d="M4.2 13.2h7.6a3.2 3.2 0 0 0 .5-6.4 4.3 4.3 0 0 0-8.3-.4 3.4 3.4 0 0 0 .2 6.8Z"/>
+    </symbol>
+    <symbol id="icon-flash" viewBox="0 0 16 16">
+      <path d="m8 .8 1.6 4.4 4.6-1.4-2.6 4 3.6 3-4.7.3.2 4.7L8 12.5l-2.7 3.3.2-4.7-4.7-.3 3.6-3-2.6-4 4.6 1.4Z"/>
+    </symbol>
+    <symbol id="icon-molo" viewBox="0 0 16 16">
+      <path d="M8.2.8c.6 2.6 4.6 4.3 4.6 8.6A4.8 4.8 0 0 1 8 14.8a4.8 4.8 0 0 1-4.8-4.8c0-2.2 1.1-3.6 2.3-4.7.1 1.7.8 2.8 1.8 3.1C6.6 6 7.2 3.2 8.2.8Z"/>
+    </symbol>
+    <symbol id="icon-he" viewBox="0 0 16 16">
+      <path d="M6.8 3.6V2.2h2.4v1.4a5.2 5.2 0 1 1-2.4 0Z"/><path d="M9.6 1.9 12.8.7l.6 1.4-3.2 1.2Z"/>
+    </symbol>
+    <symbol id="icon-bomb" viewBox="0 0 16 16">
+      <path d="M2.5 5h11a1 1 0 0 1 1 1v6.5a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1Zm2 2.2v4h1.5v-4Zm3 0v4H9v-4Zm3.5 0a1 1 0 1 0 0 2 1 1 0 0 0 0-2ZM6 2h4v2H6Z"/>
+    </symbol>
+  </svg>
+  <main class="replay-page">
+    <section id="replay-list-view" aria-labelledby="replay-list-title">
+      <header class="replay-list-header">
+        <div>
+          <h1 id="replay-list-title">Replays</h1>
+          <p class="replay-intro">Revois chaque round en 2D : positions, utilitaires, kills et bombe.</p>
+        </div>
+        <button id="replay-import" class="zone-button replay-import" type="button">↥ Importer pour le replay</button>
+      </header>
+      <div class="replay-list-toolbar">
+        <input id="replay-search" type="search" maxlength="64" placeholder="Rechercher une équipe, une carte ou une démo…"
+          aria-label="Rechercher un replay">
+        <p id="replay-usage" class="replay-muted" aria-live="polite"></p>
+      </div>
+      <p id="replay-list-status" class="replay-muted" role="status">Chargement des replays…</p>
+      <div class="panel replay-table-panel" id="replay-table-panel" hidden>
+        <table class="replay-table">
+          <thead>
+            <tr><th scope="col">Match</th><th scope="col">Carte</th><th scope="col">Date</th><th scope="col">Rounds</th>
+              <th scope="col">Espace</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr>
+          </thead>
+          <tbody id="replay-rows"></tbody>
+        </table>
+      </div>
+      <template id="replay-row-template">
+        <tr>
+          <th scope="row" class="replay-match"><button type="button" class="replay-open"></button><small></small></th>
+          <td class="replay-map"></td>
+          <td class="replay-date"></td>
+          <td class="replay-rounds"></td>
+          <td class="replay-size"><span></span><small></small></td>
+          <td class="replay-actions">
+            <button type="button" class="zone-button replay-update" hidden>Mettre à jour</button>
+            <button type="button" class="zone-button replay-delete-demo" hidden>Supprimer la démo</button>
+            <button type="button" class="zone-button replay-delete">Supprimer</button>
+          </td>
+        </tr>
+      </template>
+    </section>
+
+    <section id="replay-viewer" aria-labelledby="replay-title" hidden>
+      <header class="replay-header">
+        <button id="replay-back" class="zone-button" type="button">← Replays</button>
+        <div class="replay-heading">
+          <h1 id="replay-title"></h1>
+          <p id="replay-subtitle" class="replay-muted"></p>
+        </div>
+      </header>
+      <p id="replay-legacy" class="replay-legacy" hidden></p>
+      <nav id="replay-rounds" class="replay-rounds" aria-label="Rounds"></nav>
+      <div class="replay-workspace">
+        <section class="panel replay-stage" aria-label="Radar du round">
+          <div id="replay-radar" class="replay-radar" tabindex="0" aria-label="Radar. Molette pour zoomer, glisser pour déplacer.">
+            <canvas id="replay-canvas"></canvas>
+            <p id="replay-status" class="replay-status" hidden></p>
+            <div class="radar-zoom replay-zoom">
+              <button id="replay-zoom-out" type="button" aria-label="Dézoomer">−</button>
+              <output id="replay-zoom-value">100 %</output>
+              <button id="replay-zoom-in" type="button" aria-label="Zoomer">+</button>
+            </div>
+          </div>
+          <div class="replay-controls">
+            <button id="replay-play" class="zone-button replay-play" type="button" aria-label="Lire">▶</button>
+            <div class="replay-clock">
+              <output id="replay-clock" aria-label="Temps restant">1:55</output>
+              <output id="replay-bomb-clock" class="replay-bomb-clock" hidden></output>
+            </div>
+            <div class="replay-timeline" id="replay-timeline">
+              <div class="replay-playhead" aria-hidden="true"></div>
+              <input id="replay-time" type="range" min="0" max="1" step="1" value="0" aria-label="Position dans le round">
+              <div id="replay-kill-markers" class="replay-markers" role="group" aria-label="Kills et bombe"></div>
+              <div id="replay-utility-markers" class="replay-markers" role="group" aria-label="Utilitaires"></div>
+              <div id="replay-tooltip" class="replay-tooltip" role="tooltip" hidden></div>
+            </div>
+            <label for="replay-speed">Vitesse
+              <select id="replay-speed">
+                <option value="0.5">× 0,5</option>
+                <option value="1" selected>× 1</option>
+                <option value="2">× 2</option>
+                <option value="4">× 4</option>
+                <option value="8">× 8</option>
+              </select>
+            </label>
+          </div>
+          <div class="replay-options">
+            <label><input id="replay-names" type="checkbox" checked> Noms</label>
+            <label><input id="replay-trails" type="checkbox" checked> Trajectoires</label>
+            <label id="replay-floor-control" hidden>Niveau
+              <select id="replay-floor"><option value="upper">Haut</option><option value="lower">Bas</option></select>
+            </label>
+            <span class="replay-keys">Espace lecture · ← → 5 s · ↑ ↓ round</span>
+          </div>
+        </section>
+        <aside class="replay-side">
+          <section class="panel replay-score" aria-label="Joueurs">
+            <div id="replay-team-ct" class="replay-team replay-ct"></div>
+            <div id="replay-team-t" class="replay-team replay-t"></div>
+          </section>
+          <section class="panel replay-feed-panel" aria-labelledby="replay-feed-title">
+            <h2 id="replay-feed-title">Kills</h2>
+            <ol id="replay-feed" class="replay-feed"></ol>
+          </section>
+        </aside>
+      </div>
+    </section>
+  </main>
+  <dialog id="replay-dialog" class="replay-dialog">
+    <form method="dialog">
+      <h2 id="replay-dialog-title"></h2>
+      <p id="replay-dialog-text"></p>
+      <div class="replay-dialog-actions">
+        <button value="cancel" class="zone-button" type="submit">Annuler</button>
+        <button value="confirm" class="zone-button replay-danger" type="submit" id="replay-dialog-confirm">Supprimer</button>
+      </div>
+    </form>
+  </dialog>
+</body>
+</html>

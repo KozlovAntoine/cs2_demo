@@ -22,7 +22,8 @@ from favorite_throw_context import extract_context
 from grenade_data import KINDS, UTILITY_KINDS, read_clips
 from job_control import JobCancelled, check_job_cancelled, current_control, job_checkpoint
 from job_log import current_job_log, log_command_output
-from round_replay import write_round_replay
+from replay_library import save_replay_demo
+from round_replay import demo_header, write_round_replay
 from throw_groups import RADAR_GROUP_RADIUS, THROW_GROUP_SIZE_UNITS, group_throws
 from throw_index import record_throw_index
 from throw_inputs import add_throw_inputs
@@ -334,7 +335,7 @@ def run_demo_analyzer(installation, demo, folder, **options):
     return FALLBACK_DEMO_SOURCE
 
 
-def analyze_demo(installation, demo, kind, work, *, replay_output=None, contexts=None):
+def analyze_demo(installation, demo, kind, work, *, replay_output=None, contexts=None, keep_demo=False):
     job_checkpoint()
     with tempfile.TemporaryDirectory(dir=work) as temp:
         folder = Path(temp)
@@ -353,6 +354,8 @@ def analyze_demo(installation, demo, kind, work, *, replay_output=None, contexts
             map_name, tick_rate, _, checksum = result
             try:
                 write_round_replay(replay_output, demo, folder, map_name, tick_rate, checksum)
+                if keep_demo:
+                    save_replay_demo(replay_output, demo, checksum)
             except (ImportError, OSError, ValueError, RuntimeError, TypeError, KeyError) as error:
                 message = f"Relevé des joueurs indisponible pour {demo.name} · {error}"
                 if logger := current_job_log():
@@ -404,6 +407,75 @@ def index_throw_metadata(args):
                 failed = True
                 print(f"Échec de l’indexation de {source.name} · {error}", file=sys.stderr)
     return int(failed)
+
+
+def import_replay_demo(installation, demo, output, work, keep_demo, name=None):
+    job_checkpoint()
+    with tempfile.TemporaryDirectory(dir=work) as temp:
+        folder = Path(temp)
+        run_demo_analyzer(installation, demo, folder)
+        map_name, tick_rate, checksum, _ = demo_header(folder, demo)
+        job_checkpoint()
+        data = write_round_replay(output, demo, folder, map_name, tick_rate, checksum, name)
+    if keep_demo:
+        save_replay_demo(output, demo, checksum)
+    return map_name, sum(1 for stage in data["rounds"] if stage.get("sides"))
+
+
+def import_replays(sources, output, installation, *, members=(), keep_demo=True, update=print, on_progress=None,
+                   names=None):
+    """Build round replays without touching the clip library, the utility index or the import registry."""
+    failures = 0
+    completed = 0
+    with reserve_export(output):
+        for index, source in enumerate(sources, 1):
+            label = f"Fichier {index}/{len(sources)} · {source.name}"
+            with tempfile.TemporaryDirectory(prefix=".replay-import-", dir=output) as temp:
+                work = Path(temp).resolve()
+                try:
+                    if source.suffix.lower() == ".rar":
+                        update("Extraction", f"{label} · Extraction des démos…")
+                    demos = load_demos(source, work, None, members if len(sources) == 1 else ())
+                except JobCancelled:
+                    raise
+                except (OSError, ValueError, subprocess.SubprocessError) as error:
+                    failures += 1
+                    update("Replay", f"{label} · {error}")
+                    if on_progress is not None:
+                        on_progress(source, None, "error", note=str(error))
+                    continue
+                for number, demo in enumerate(demos, 1):
+                    member = demo.relative_to(work / "demos").as_posix() if source.suffix.lower() == ".rar" else None
+
+                    def queue(state, **details):
+                        if on_progress is not None:
+                            on_progress(source, member, state, **details)
+
+                    queue("analysis")
+                    update("Replay", f"{label} · Démo {number}/{len(demos)} · {demo.name}")
+                    try:
+                        map_name, rounds = import_replay_demo(installation, demo, output, work, keep_demo,
+                                                              (names or {}).get(source))
+                    except JobCancelled:
+                        raise
+                    except Exception as error:
+                        failures += 1
+                        if logger := current_job_log():
+                            logger.exception("Échec du replay · %s", demo.name)
+                        message = str(error) or type(error).__name__
+                        if isinstance(error, ImportError):
+                            message = "Demoparser est requis pour les replays (étape 6 du README)."
+                        update("Replay", f"{demo.name} · {message}")
+                        queue("error", note=message)
+                    else:
+                        completed += 1
+                        note = f"Replay · {rounds} rounds" + (" · démo conservée" if keep_demo else "")
+                        update("Replay", f"{demo.name} · {map_name} · {note}")
+                        queue("complete", map=map_name, note=note)
+                    finally:
+                        release_staged_demo(demo, work)
+                    check_job_cancelled()
+    return completed, failures
 
 
 def record_video(installation, demo, config, before_capture, *, source=None):
@@ -522,7 +594,8 @@ def export_demos(args, source, installation, out, work, update, on_import, on_pr
         contexts = {} if selective else None
         map_name, tick_rate, throws, checksum = analyze_demo(
             installation, demo, args.type if args.prepare else "all", work,
-            replay_output=None if args.prepare else out.parent, contexts=contexts)
+            replay_output=None if args.prepare else out.parent, contexts=contexts,
+            keep_demo=getattr(args, "keep_demo", False))
         if not throws:
             update("Analyse", f"{map_name} : aucun lancer correspondant.")
             finish_demo(demo, fingerprint, demo_member)
@@ -722,6 +795,8 @@ def main():
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--prepare", action="store_true", help="Prépare les séquences et le radar sans lancer CS2")
     mode.add_argument("--index-only", action="store_true", help="Indexe les lancers et les positions des joueurs sans capture")
+    mode.add_argument("--replay-only", action="store_true", help="Crée uniquement les replays 2D, sans clip ni index")
+    parser.add_argument("--keep-demo", action="store_true", help="Conserve la démo à côté de son replay")
     parser.add_argument("--limit", type=int, help="Limite de lancers par carte pour un essai")
     selection = parser.add_mutually_exclusive_group()
     selection.add_argument("--all-clips", action="store_true", help="Génère tous les lancers distincts")
@@ -735,8 +810,15 @@ def main():
     try:
         if args.index_only:
             return index_throw_metadata(args)
+        if args.replay_only:
+            output = args.output.resolve()
+            output.mkdir(parents=True, exist_ok=True)
+            completed, failures = import_replays([source.resolve(strict=True) for source in args.demo], output,
+                                                 find_csdm(args.csdm), keep_demo=args.keep_demo,
+                                                 update=lambda phase, message: print(message, flush=True))
+            return int(bool(failures) or not completed)
         if len(args.demo) != 1:
-            parser.error("Indique une seule source pour une capture, ou utilise --index-only.")
+            parser.error("Indique une seule source pour une capture, ou utilise --index-only ou --replay-only.")
         args.demo = args.demo[0]
         result = generate(args)
     except (OSError, ValueError, subprocess.SubprocessError) as error:

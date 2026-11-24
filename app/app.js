@@ -7,6 +7,8 @@ const demo = byId("demo");
 const limit = byId("limit");
 const captureMode = byId("capture-mode");
 const scoreThreshold = byId("score-threshold");
+const importMode = byId("import-mode");
+const keepDemo = byId("keep-demo");
 const controls = byId("controls");
 const gallery = byId("gallery");
 const home = byId("home");
@@ -20,6 +22,7 @@ let closed = false;
 let galleryPath;
 let lastLibrarySearch = "";
 let lastPlayerSearch = "view=players";
+let lastReplaySearch = "view=replay";
 let openCalloutsAfterLoad = false;
 const ESTIMATED_SECONDS_PER_CLIP = 13;
 let estimatedJobId;
@@ -70,7 +73,7 @@ function updateSelectionBadge() {
     const label = importedLabel(demo.value ? entries.filter((entry) => entry.member === demo.value) : entries);
     const badge = byId("source-imported");
     badge.textContent = label;
-    badge.hidden = !label;
+    badge.hidden = !label || importMode.value === "replay";
 }
 
 function selectSource(selection) {
@@ -188,8 +191,9 @@ function displayQueue(job, messages) {
 
         const count = (value) => row.total ? `${value ?? "—"} / ${row.total}` : "—";
         const [capture, generation] = element.querySelectorAll(".queue-clips span");
-        capture.textContent = `Capture ${count(row.captured)}`;
-        generation.textContent = `Génération ${count(row.generated)}`;
+        capture.textContent = job.mode === "replay" ? "Replay" : `Capture ${count(row.captured)}`;
+        generation.textContent = job.mode === "replay" ? (row.state === "complete" ? "Prêt" : "—")
+            : `Génération ${count(row.generated)}`;
 
         const recording = ["starting", "capture"].includes(row.state);
         const done = recording ? row.captured : row.generated;
@@ -295,6 +299,7 @@ for (const id of ["pause-job", "cancel-job"]) {
 function route() {
     const params = new URLSearchParams(location.search);
     if (params.get("view") === "players") return "/players/index.html";
+    if (params.get("view") === "replay") return "/replay/index.html";
     const galleryId = params.get("gallery");
     const exportPath = galleryId && /^[\w-]+$/.test(galleryId) ? `/exports/${galleryId}/index.html` : null;
     if (["export", "galleries"].includes(params.get("view")) || (!exportPath && libraryAvailable === false)) return null;
@@ -311,6 +316,19 @@ function setAddress(search, replace = false) {
 
 window.utilityNavigation = {
     search: () => location.search,
+    updateReplay(search, replace) {
+        if (closed || route() !== "/replay/index.html") return;
+        const params = new URLSearchParams(search);
+        params.set("view", "replay");
+        lastReplaySearch = params.toString();
+        setAddress(lastReplaySearch, replace);
+    },
+    openImport(mode) {
+        importMode.value = mode === "replay" ? "replay" : "clips";
+        applyImportMode();
+        setAddress("view=export");
+        renderRoute(true);
+    },
     update(search, replace) {
         if (closed) return;
         const path = route();
@@ -338,10 +356,13 @@ function renderRoute(focus = false, refresh = false) {
     }
     const library = path.startsWith("/library/");
     const players = path === "/players/index.html";
+    const replays = path === "/replay/index.html";
     if (library) lastLibrarySearch = location.search.slice(1);
     if (players) lastPlayerSearch = location.search.slice(1);
-    gallery.title = players ? "Carte des positions des joueurs" : "Radar et clips";
-    byId("gallery-view").setAttribute("aria-label", players ? "Positions des joueurs" : "Galerie de clips");
+    if (replays) lastReplaySearch = location.search.slice(1);
+    gallery.title = players ? "Carte des positions des joueurs" : replays ? "Replays des rounds" : "Radar et clips";
+    byId("gallery-view").setAttribute("aria-label",
+        players ? "Positions des joueurs" : replays ? "Replays" : "Galerie de clips");
     if (galleryPath !== path || refresh) {
         galleryPath = path;
         // The top-level URL owns history. Replacing the frame avoids extra Back steps.
@@ -350,11 +371,13 @@ function renderRoute(focus = false, refresh = false) {
         gallery.contentWindow.restoreLibraryAddress?.();
     } else if (players) {
         gallery.contentWindow.restorePlayerAddress?.();
+    } else if (replays) {
+        gallery.contentWindow.restoreReplayAddress?.();
     }
     home.hidden = true;
     byId("gallery-view").hidden = false;
-    updateNavigation(players ? "players" : library ? "library" : "gallery");
-    if (focus) byId(players ? "players-link" : "library-link").focus();
+    updateNavigation(players ? "players" : replays ? "replays" : library ? "library" : "gallery");
+    if (focus) byId(players ? "players-link" : replays ? "replays-link" : "library-link").focus();
 }
 
 function openLibrary(exportId, focus = true) {
@@ -378,20 +401,25 @@ function showHome(focus = true) {
     openCalloutsAfterLoad = false;
     byId("gallery-view").hidden = true;
     home.hidden = false;
-    const section = new URLSearchParams(location.search).get("view") === "galleries" ? "galleries" : "export";
+    const params = new URLSearchParams(location.search);
+    const section = params.get("view") === "galleries" ? "galleries" : "export";
+    if (params.get("mode") === "replay" && importMode.value !== "replay") {
+        importMode.value = "replay";
+        applyImportMode();
+    }
     updateNavigation(section);
     if (focus && section === "export" && !controls.disabled) choose.focus();
 }
 
 function updateNavigation(section) {
     document.body.dataset.view = section;
-    const active = {library: "library-link", players: "players-link", export: "back",
+    const active = {library: "library-link", players: "players-link", replays: "replays-link", export: "back",
         galleries: "galleries-link", gallery: "galleries-link"}[section];
-    for (const id of ["library-link", "players-link", "back", "galleries-link"]) {
+    for (const id of ["library-link", "players-link", "replays-link", "back", "galleries-link"]) {
         if (id === active) byId(id).setAttribute("aria-current", "page");
         else byId(id).removeAttribute("aria-current");
     }
-    byId("route-label").textContent = {library: "Vidéothèque", players: "Joueurs", export: "Importation",
+    byId("route-label").textContent = {library: "Vidéothèque", players: "Joueurs", replays: "Replays", export: "Importation",
         galleries: "Galeries", gallery: "Galerie"}[section];
     byId("route-action").textContent = section === "export" ? "› Ouvrir la vidéothèque" : "↥ Importer .dem ou archive .rar";
     byId("route-action").disabled = section === "export" && !libraryAvailable;
@@ -464,6 +492,7 @@ byId("generate").addEventListener("submit", async (event) => {
     try {
         const { job } = await request("/api/generate", {
             selection: selected.id, kind: byId("kind").value, demo: demo.value || null,
+            mode: importMode.value, keepDemo: keepDemo.checked,
             limit: limit.value ? Number(limit.value) : null, captureMode: captureMode.value,
             scoreThreshold: scoreThreshold.disabled || !scoreThreshold.value ? null : scoreThreshold.valueAsNumber,
         });
@@ -479,6 +508,18 @@ captureMode.addEventListener("change", () => {
     scoreThreshold.disabled = captureMode.value === "all";
 });
 
+function applyImportMode() {
+    const replayOnly = importMode.value === "replay";
+    byId("clip-settings").hidden = replayOnly;
+    submit.textContent = replayOnly ? "Créer les replays →" : "Générer les clips →";
+    byId("import-hint").textContent = replayOnly
+        ? "Sans CS2 : l’analyse crée le replay 2D de chaque démo. Aucun clip n’est généré et la vidéothèque ne change pas."
+        : "Laisse Steam ouvert. CS2 se lance pour chaque démo et se ferme après sa dernière capture.";
+    updateSelectionBadge();
+}
+
+importMode.addEventListener("change", applyImportMode);
+
 byId("back").addEventListener("click", () => {
     setAddress("view=export");
     renderRoute(true);
@@ -486,6 +527,10 @@ byId("back").addEventListener("click", () => {
 byId("library-link").addEventListener("click", () => openLibrary());
 byId("players-link").addEventListener("click", () => {
     setAddress(lastPlayerSearch);
+    renderRoute(true);
+});
+byId("replays-link").addEventListener("click", () => {
+    setAddress(lastReplaySearch);
     renderRoute(true);
 });
 byId("callouts-link").addEventListener("click", openCallouts);
@@ -543,7 +588,10 @@ async function poll() {
         if (job.state === "running" && !job.portrait) awaitingJob = job.id;
         if (["complete", "error", "cancelled"].includes(job.state) && awaitingJob === job.id) {
             awaitingJob = null;
-            if (job.state === "complete" && job.url && !job.failedFiles) {
+            if (job.state === "complete" && job.mode === "replay") {
+                setAddress("view=replay");
+                renderRoute(true, true);
+            } else if (job.state === "complete" && job.url && !job.failedFiles) {
                 if (libraryAvailable) openLibrary(job.url.split("/")[2]);
                 else openGallery(job.url);
             }

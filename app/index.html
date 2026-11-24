@@ -15,6 +15,7 @@
     <nav aria-label="Espace personnel">
       <button id="library-link" type="button"><span aria-hidden="true">▦</span>Vidéothèque</button>
       <button id="players-link" type="button"><span aria-hidden="true">◎</span>Joueurs</button>
+      <button id="replays-link" type="button"><span aria-hidden="true">▶</span>Replays</button>
       <button id="callouts-link" type="button"><span aria-hidden="true">◫</span>Callouts</button>
       <button id="galleries-link" type="button"><span aria-hidden="true">▱</span>Galeries</button>
       <button id="back" type="button"><span aria-hidden="true">↥</span>Importation</button>
@@ -48,7 +49,15 @@
           </section>
           <section class="panel settings-panel" aria-labelledby="settings-title">
           <h2 id="settings-title">Réglages de génération</h2>
+          <label class="field"><span>Type d’import</span>
+            <select id="import-mode">
+              <option value="clips">Clips et replay</option>
+              <option value="replay">Replay uniquement (sans CS2)</option>
+            </select>
+          </label>
           <label class="field" id="demo-field" hidden><span>Démo de l’archive</span><select id="demo"></select></label>
+          <label class="checkbox-field"><input id="keep-demo" type="checkbox" checked> <span>Conserver la démo pour le replay</span></label>
+          <div id="clip-settings">
           <label class="field"><span>Utilitaire</span>
             <select id="kind">
               <option value="all">Tous</option>
@@ -73,11 +82,12 @@
               <input id="limit" type="number" min="1" step="1" placeholder="Tous">
             </label>
           </details>
+          </div>
           <button class="primary" id="submit" type="submit" disabled>Générer les clips →</button>
           </section>
         </fieldset>
       </form>
-      <p class="hint">Laisse Steam ouvert. CS2 se lance pour chaque démo et se ferme après sa dernière capture.</p>
+      <p class="hint" id="import-hint">Laisse Steam ouvert. CS2 se lance pour chaque démo et se ferme après sa dernière capture.</p>
       <p id="notification" class="error" role="alert" hidden></p>
     </section>
       <section class="panel status" id="status" hidden aria-labelledby="queue-title">

@@ -100,6 +100,8 @@ h2 { font-size: 1rem; font-weight: 650; }
 fieldset { padding: 0; margin: 0; border: 0; min-width: 0; }
 .field { display: grid; gap: 6px; margin-bottom: 14px; }
 .field > span { font-size: .87rem; font-weight: 650; }
+.checkbox-field { display: flex; align-items: center; gap: 8px; margin: -4px 0 14px; font-size: .87rem; }
+.checkbox-field input { width: 16px; height: 16px; accent-color: var(--gold); }
 .selection { gap: 9px; border: 1px dashed #48515c; border-radius: 8px; background: #12171d; }
 .source-name { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 7px; min-width: 0; }
 #chosen { color: var(--muted); min-width: 0; overflow-wrap: anywhere; font-weight: 400; }

@@ -36,6 +36,14 @@ CS2 Utilities is a local, browser-based application for turning Counter-Strike 2
 - Use fullscreen library view for a larger workspace.
 - Preserve the current map, clip, radar group, and filters in the URL. Browser Back and Forward restore navigation state; copied links work on the same PC.
 
+## Round replays
+
+- List every demo with recorded player positions, including earlier imports, with match score, map, date, rounds, and disk usage.
+- Replay any round on the map radar: players with view direction and health, grenades in flight with trails, smokes and incendiaries for their recorded duration, flash and HE bursts, kill lines, bomb plant, defuse, and explosion.
+- Navigate by round (colored by winner, with side-swap gaps), timeline with kill and bomb markers, playback speed, keyboard shortcuts, zoom and pan, and a kill feed that seeks to each kill.
+- Import demos or archives in **Replay only** mode, without CS2 and without touching the clip library or utility index.
+- Keep the analysed demo next to its replay, delete the stored demo or the whole replay to free space, and update older simplified replays from a stored demo.
+
 ## Radar and heatmap
 
 - Show grenade activation points or launch points on the map radar.
