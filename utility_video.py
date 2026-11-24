@@ -16,6 +16,7 @@ from pathlib import Path, PurePosixPath
 
 from capture_progress import CaptureProgress
 from clip_library import CATALOGUE_PREFIX, record_throw_usage, throw_references
+from clip_thumbnails import create_thumbnails
 from csdm_capture_pause import shorten_capture_pause
 from demo_imports import demo_fingerprint, read_demo_imports, record_demo_import
 from enemy_pov import assign_enemy_pov
@@ -308,12 +309,15 @@ def publish_videos(render_folder, clips, out, map_number, *, completed_only=Fals
             raise
         clip["video"] = destination.relative_to(out).as_posix()
         published.append(clip)
+    create_thumbnails([out / clip["video"] for clip in published])
     return published
 
 
 def publish_gallery(out, source, matches):
-    for file_name in ("index.html", "gallery.css", "gallery.js", "callouts.js", "InterVariable.woff2", "Inter-OFL.txt"):
+    for file_name in ("index.html", "gallery.css", "gallery.js", "callouts.js", "GeistVariable.woff2",
+                      "GeistMonoVariable.woff2", "Geist-OFL.txt"):
         shutil.copyfile(ROOT / "gallery" / file_name, out / file_name)
+    shutil.copytree(ROOT / "gallery" / "maps", out / "maps", dirs_exist_ok=True)
     catalogue = {"title": source.name, "groupRadius": RADAR_GROUP_RADIUS,
                  "groupBoxUnits": THROW_GROUP_SIZE_UNITS, "matches": matches}
     temporary = out / ".catalogue.js.tmp"

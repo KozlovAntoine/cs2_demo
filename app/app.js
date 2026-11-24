@@ -243,6 +243,7 @@ function displayJob(job) {
     const stateLabel = job.cancelRequested ? "Annulation en cours" : job.paused ? "En pause"
         : job.pauseRequested ? "Pause demandée" : running ? livePhase || `${job.phase} en cours` : "";
     byId("working").textContent = stateLabel;
+    byId("working").title = stateLabel;
     byId("status").hidden = job.state === "idle";
     const hasQueue = Boolean(job.queue?.length);
     document.querySelector(".status-heading").hidden = hasQueue && job.state !== "error";
@@ -421,7 +422,7 @@ function updateNavigation(section) {
     }
     byId("route-label").textContent = {library: "Vidéothèque", players: "Joueurs", replays: "Replays", export: "Importation",
         galleries: "Galeries", gallery: "Galerie"}[section];
-    byId("route-action").textContent = section === "export" ? "› Ouvrir la vidéothèque" : "↥ Importer .dem ou archive .rar";
+    byId("route-action").textContent = section === "export" ? "Ouvrir la vidéothèque" : "Importer une démo";
     byId("route-action").disabled = section === "export" && !libraryAvailable;
     byId("callouts-link").disabled = !libraryAvailable;
 }

@@ -26,6 +26,7 @@ from clip_library import (
     CATALOGUE_PREFIX, clip_paths, delete_clip, existing_galleries, export_url, find_library_clip, library_catalogue,
     playable_matches, published_catalogues, read_catalogue, set_clip_state,
 )
+from clip_thumbnails import THUMBNAIL_FOLDER, THUMBNAIL_NAME, create_thumbnail
 from compilation_video import COMPILATION_FOLDER, MAX_CLIPS, generate_compilation
 from portrait_video import existing_portrait, generate_portrait, portrait_folder
 from replay_library import delete_replay, list_replays, load_replay, replay_name, saved_demo, storage_usage
@@ -39,8 +40,10 @@ from utility_video import (
 
 APP_ID = "cs2-utility-videos"
 STATIC = {"/": "index.html", "/app.css": "app.css", "/app.js": "app.js", "/utility.ico": "utility.ico"}
-GALLERY_ASSETS = {"index.html", "gallery.css", "gallery.js", "callouts.js", "InterVariable.woff2", "Inter-OFL.txt"}
+GALLERY_ASSETS = {"index.html", "gallery.css", "gallery.js", "callouts.js", "GeistVariable.woff2",
+                  "GeistMonoVariable.woff2", "Geist-OFL.txt"}
 GALLERY_FILES = GALLERY_ASSETS | {"catalogue.js"}
+MAP_EMBLEM = re.compile(r"(de|cs|ar)_[a-z0-9_]+\.png")
 PLAYER_ASSETS = {"index.html", "players.css", "players.js"}
 REPLAY_ASSETS = {"index.html", "replay.css", "replay.js"}
 CONTENT_POLICY = ("default-src 'self'; style-src 'self' 'unsafe-inline'; frame-ancestors 'self'; "
@@ -711,6 +714,8 @@ class Handler(BaseHTTPRequestHandler):
             file = (ROOT / "app" / STATIC[path]) if path in STATIC else self.gallery_file(path)
             if path.startswith("/library/") and path.removeprefix("/library/") in GALLERY_ASSETS:
                 file = ROOT / "gallery" / path.removeprefix("/library/")
+            elif path.startswith("/library/maps/") and MAP_EMBLEM.fullmatch(path.removeprefix("/library/maps/")):
+                file = ROOT / "gallery" / "maps" / path.removeprefix("/library/maps/")
             elif path.startswith("/players/") and path.removeprefix("/players/") in PLAYER_ASSETS:
                 file = ROOT / "players" / path.removeprefix("/players/")
             elif path.startswith("/replay/") and path.removeprefix("/replay/") in REPLAY_ASSETS:
@@ -802,15 +807,21 @@ class Handler(BaseHTTPRequestHandler):
         directory = output / parts[2]
         if len(parts) == 4 and parts[3] in GALLERY_FILES:
             file = directory / parts[3]
+        elif len(parts) == 5 and parts[3] == "maps" and MAP_EMBLEM.fullmatch(parts[4]):
+            return ROOT / "gallery" / "maps" / parts[4]
         elif len(parts) == 5 and (
             (parts[3] == "radars" and re.fullmatch(r"[\w-]+\.png", parts[4])) or
-            (parts[3] == "clips" and re.fullmatch(r"[\w-]+\.mp4", parts[4]))
+            (parts[3] == "clips" and re.fullmatch(r"[\w-]+\.mp4", parts[4])) or
+            (parts[3] == THUMBNAIL_FOLDER and THUMBNAIL_NAME.fullmatch(parts[4]))
         ):
             file = directory / parts[3] / parts[4]
         else:
             return None
         resolved = file.resolve()
         if resolved.is_relative_to(directory) and directory.resolve().parent == output:
+            if len(parts) == 5 and parts[3] == THUMBNAIL_FOLDER and not resolved.is_file():
+                clip_file = directory / "clips" / f"{resolved.stem}.mp4"
+                return create_thumbnail(clip_file) if clip_file.resolve().is_relative_to(directory) else None
             if len(parts) == 4 and parts[3] in GALLERY_ASSETS and (directory / "index.html").is_file():
                 return ROOT / "gallery" / parts[3]
             return resolved

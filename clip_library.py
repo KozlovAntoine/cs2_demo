@@ -9,6 +9,7 @@ from pathlib import Path
 from urllib.parse import quote
 from uuid import uuid4
 
+from clip_thumbnails import remove_thumbnail
 from grenade_data import UTILITY_KINDS
 from throw_groups import RADAR_GROUP_RADIUS, THROW_GROUP_SIZE_UNITS
 from throw_index import indexed_maps
@@ -355,6 +356,7 @@ def delete_clip(output, export_id, filename):
             temporary.write_bytes(original)
             temporary.replace(manifest)
             raise
+        remove_thumbnail(clip_file)
     finally:
         temporary.unlink(missing_ok=True)
     with suppress(OSError):

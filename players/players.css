@@ -41,7 +41,7 @@
   min-width: 0;
   border: 1px solid var(--edge);
   border-radius: 7px;
-  background: #202831;
+  background: #16161a;
   color: inherit;
   font: inherit;
 }
@@ -64,7 +64,7 @@
 .player-counter-terrorists { --side-color: var(--side-ct); }
 .player-message { color: var(--muted); font-size: .85rem; }
 .player-controls .player-message { margin-top: 8px; }
-.player-radar { position: relative; aspect-ratio: 1; overflow: hidden; border-radius: 6px; background: #10161c; }
+.player-radar { position: relative; aspect-ratio: 1; overflow: hidden; border-radius: 6px; background: #0f0f11; }
 .player-radar img, .player-radar canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
 .player-radar img { object-fit: fill; }
 .player-radar canvas { pointer-events: none; }
@@ -77,7 +77,7 @@
   transform: translate(-50%, -50%);
   border: 1px solid #fff;
   border-radius: 50%;
-  box-shadow: 0 0 0 1px #10161ca0;
+  box-shadow: 0 0 0 1px #0f0f11a0;
   pointer-events: none;
 }
 .player-arrival {
@@ -90,13 +90,13 @@
   padding: 7px 9px;
   border: 1px solid var(--edge);
   border-radius: 7px;
-  background: #171d23f7;
+  background: #16161af7;
 }
 .player-arrival-row { display: grid; grid-template-columns: 2ch 4ch 1fr; align-items: center; gap: 8px; min-height: 28px; }
 .player-arrival-side { color: var(--side-color); font-weight: 650; }
 .player-arrival output { font-weight: 650; font-variant-numeric: tabular-nums; }
 .player-arrival .zone-button { padding: 4px 7px; font-size: .8rem; justify-self: end; }
-.player-map-status { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); width: max-content; max-width: calc(100% - 24px); padding: 7px 10px; border-radius: 5px; background: #10202aed; font-size: .82rem; text-align: center; }
+.player-map-status { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); width: max-content; max-width: calc(100% - 24px); padding: 7px 10px; border-radius: 5px; background: #141417ed; font-size: .82rem; text-align: center; }
 .player-arrival:not([hidden]) + .player-map-status { top: 12px; bottom: auto; }
 
 @media (max-width: 700px) {

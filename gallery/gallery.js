@@ -7,10 +7,10 @@ const library = window.utilityLibrary === true;
 const portrait = library && window.utilityPortrait === true;
 const clipStateEnabled = library && window.utilityClipState === true;
 const kinds = {
-    smoke: { label: "Smoke", color: "#8dd3f3" },
-    flash: { label: "Flash", color: "#f7df88" },
-    molo: { label: "Molotov", color: "#fa9c77" },
-    he: { label: "HE", color: "#ed91af" },
+    smoke: { label: "Smoke", color: "#c4cad4" },
+    flash: { label: "Flash", color: "#ebcb52" },
+    molo: { label: "Molotov", color: "#ee7b4c" },
+    he: { label: "HE", color: "#d9719e" },
 };
 const mouseModes = { left: "Clic gauche", middle: "Clic milieu · gauche + droite", right: "Clic droit" };
 const RARE_BELOW = 2;
@@ -390,15 +390,48 @@ function showLineup(clip) {
     copyStatus.textContent = hasCommand ? "" : "Position et angle indisponibles pour ce clip.";
 }
 
+function clipThumbnail(clip) {
+    const source = clip.video?.replace(/clips\/([\w-]+)\.mp4$/, "thumbs/$1.jpg");
+    if (!source || source === clip.video) return;
+    const image = document.createElement("img");
+    image.alt = "";
+    image.loading = "lazy";
+    image.decoding = "async";
+    image.addEventListener("error", () => image.remove(), { once: true });
+    image.src = source;
+    return image;
+}
+
+function clipScore(clip) {
+    return clip?.potentialScore > 0 ? Math.round(clip.potentialScore * 100) : undefined;
+}
+
+function sideLabel(clip) {
+    return clip.side ? `côté ${String(clip.side).toUpperCase()}` : "";
+}
+
 function renderClipTitle(clip) {
     const title = byId("clip-title");
+    const kicker = byId("clip-kicker");
+    const scoreBlock = byId("clip-score");
     if (!clip) {
         title.textContent = "Clip";
+        kicker.replaceChildren();
+        scoreBlock.hidden = true;
         return;
     }
-    const location = library ? calloutName(clip, currentMatch) : clip.player;
-    const score = isPotential(clip) ? ` · ${potentialPoints(clip)}` : "";
-    title.textContent = `${kinds[clip.kind].label} · ${location}${score}`;
+    title.textContent = library ? calloutName(clip, currentMatch) : clip.player;
+    const kind = kinds[clip.kind];
+    const marker = dot();
+    marker.style.setProperty("--tint", kind.color);
+    kicker.replaceChildren(marker, [kind.label, clip.team].filter(Boolean).join(" · "));
+    const score = clipScore(clip);
+    scoreBlock.hidden = score === undefined;
+    if (score === undefined) return;
+    scoreBlock.classList.toggle("is-potential", isPotential(clip));
+    scoreBlock.title = potentialPoints(clip);
+    byId("clip-score-value").textContent = score;
+    byId("clip-score-fill").style.width = `${Math.min(100, Math.max(0, score))}%`;
 }
 
 function selectClip(clip, autoplay = false) {
@@ -429,9 +462,10 @@ function selectClip(clip, autoplay = false) {
             detail.textContent = "Aucun clip pour ce filtre.";
             byId("clip-meta").textContent = "";
         } else {
-            byId("clip-meta").textContent = `R${clip.round} · ${clip.duration.toLocaleString("fr-FR")} s${clip.estimated ? " · fin estimée" : ""}`;
+            byId("clip-meta").textContent = [library && clip.player, sideLabel(clip), `round ${clip.round}`,
+                `${clip.duration.toLocaleString("fr-FR")} s${clip.estimated ? " · fin estimée" : ""}`].filter(Boolean).join(" · ");
             const badge = frequencyBadge(clip, true);
-            if (badge) byId("clip-meta").append(" ", badge);
+            if (badge) byId("clip-meta").append(" · ", badge);
             detail.textContent = "Clip préparé. Le rendu vidéo est encore à faire.";
         }
     }
@@ -519,7 +553,7 @@ function handleLibraryShortcut(event) {
     const key = event.key.toLowerCase();
     if (key !== "f" && key !== "n" && key !== "b" && key !== "c") return;
     const target = event.target;
-    if (target?.isContentEditable || target?.closest?.("input, textarea, select, .throw-filter") || document.querySelector("dialog[open]")) return;
+    if (target?.isContentEditable || target?.closest?.("input, textarea, select, .throw-filter, .map-picker") || document.querySelector("dialog[open]")) return;
 
     if (key === "c") {
         if (!compilationState?.active || !selected?.exportId) return;
@@ -1006,7 +1040,7 @@ function syncReviewButtons() {
     favoriteButton.hidden = !clipStateEnabled || !selected?.exportId;
     if (favoriteButton.hidden) return;
     const favorite = Boolean(selected.favorite);
-    favoriteButton.textContent = favorite ? "★" : "☆";
+    favoriteButton.textContent = favorite ? "★ Favori" : "☆ Ajouter aux favoris";
     favoriteButton.setAttribute("aria-pressed", String(favorite));
     favoriteButton.title = `${favorite ? "Retirer des favoris" : "Ajouter aux favoris"} · ${selected.player}`;
     favoriteButton.setAttribute("aria-label", favoriteButton.title);
@@ -1047,7 +1081,7 @@ async function reviewClip(button, updates) {
             const row = clipRowAt(visible.indexOf(clip));
             if (row) {
                 row.querySelector(".favorite-badge").hidden = !clip.favorite;
-                row.querySelector(".potential-badge").hidden = !isPotential(clip);
+                row.querySelector(".clip-points")?.classList.toggle("is-potential", isPotential(clip));
             }
         }
     } catch (error) {
@@ -1067,8 +1101,8 @@ dismissPotentialButton.addEventListener("click", () => {
     if (isPotential(selected)) reviewClip(dismissPotentialButton, { potentialDismissed: true });
 });
 
-function matchesThrowSelection(clip, query) {
-    return (filter === "all" || clip.kind === filter)
+function matchesThrowSelection(clip, query, anyKind = false) {
+    return (anyKind || filter === "all" || clip.kind === filter)
         && (!roundSelect.value || String(clip.round) === roundSelect.value)
         && matchesThrowFilters(clip)
         && (!query || calloutName(clip, currentMatch).toLocaleLowerCase("fr").includes(query));
@@ -1078,11 +1112,23 @@ function renderClips(deletion, playingClip, preferred = selected, restoreGroupId
     const frequency = frequencySelect?.value;
     const query = clipSearch?.value.trim().toLocaleLowerCase("fr");
     const potentialOnly = activeStatusFilters.has("potential");
-    filtered = currentMatch.clips.filter((clip) => matchesThrowSelection(clip, query)
-        && (!frequency || throwFrequency(clip)?.category === frequency)
-        && (!activeStatusFilters.has("favorites") || clip.favorite)
-        && (!activeStatusFilters.has("unwatched") || !clip.watched)
-        && (!potentialOnly || isPotential(clip)));
+    // Les compteurs des types suivent les autres filtres, sans tenir compte du type choisi.
+    const counts = new Map([["all", 0]]);
+    filtered = [];
+    for (const clip of currentMatch.clips) {
+        if (!(matchesThrowSelection(clip, query, true)
+            && (!frequency || throwFrequency(clip)?.category === frequency)
+            && (!activeStatusFilters.has("favorites") || clip.favorite)
+            && (!activeStatusFilters.has("unwatched") || !clip.watched)
+            && (!potentialOnly || isPotential(clip)))) continue;
+        counts.set("all", counts.get("all") + 1);
+        counts.set(clip.kind, (counts.get(clip.kind) ?? 0) + 1);
+        if (filter === "all" || clip.kind === filter) filtered.push(clip);
+    }
+    for (const button of byId("types").children) {
+        const count = button.querySelector(".kind-count");
+        if (count) count.textContent = (counts.get(button.dataset.kind) ?? 0).toLocaleString("fr-FR");
+    }
     const compare = clipComparator();
     if (compare) filtered.sort(compare);
     if (clipStateEnabled) byId("clip-sort").textContent = clipSortMode() === "points" ? "Tri par points" : "Tri par round";
@@ -1101,7 +1147,8 @@ function renderClips(deletion, playingClip, preferred = selected, restoreGroupId
 
 function renderClipList(preferred = selected, autoplay = false, playingClip) {
     visible = radarSelection ?? filtered;
-    byId("count").textContent = `${visible.length} ${visible.length === 1 ? "lancer" : "lancers"}`;
+    byId("count").textContent = visible.length.toLocaleString("fr-FR");
+    byId("count").title = `${visible.length} ${visible.length === 1 ? "lancer" : "lancers"}`;
     const index = visible.indexOf(playingClip ?? preferred);
     const page = index >= 0 ? Math.floor(index / CLIPS_PER_PAGE) : playingClip ? clipPage : 0;
     renderClipPage(page);
@@ -1136,51 +1183,57 @@ function renderClipPage(page) {
         row.dataset.index = start + offset;
         row.setAttribute("aria-pressed", String(clip === selected));
         row.style.setProperty("--tint", kinds[clip.kind].color);
-        row.append(dot());
+        const thumb = document.createElement("span");
+        thumb.className = "clip-thumb";
+        const image = clipThumbnail(clip);
+        if (image) thumb.append(image);
+        const length = document.createElement("small");
+        length.className = "clip-length";
+        length.textContent = `${clip.duration.toLocaleString("fr-FR")} s`;
+        thumb.append(length);
+        row.append(thumb);
         const badge = clipStateEnabled ? document.createElement("small") : null;
         if (badge) {
             badge.className = "watched-badge";
             badge.textContent = "Vu";
             badge.hidden = !clip.watched;
         }
-        const fields = [["span", clip.player], ["span", kinds[clip.kind].label], ["small", `R${clip.round}`],
-            ["small", `${clip.duration.toLocaleString("fr-FR")} s`]];
-        for (const [index, [tag, value]] of fields.entries()) {
-            const cell = document.createElement(tag);
-            if (library && index === 0) {
-                const callout = document.createElement("span");
-                callout.className = "clip-callout";
-                callout.textContent = calloutName(clip, currentMatch);
-                cell.append(callout);
-                if (badge) cell.append(badge);
-                const source = document.createElement("small");
-                source.className = "clip-source";
-                source.title = clip.source;
-                source.textContent = value;
-                cell.append(source);
-            } else {
-                cell.textContent = value;
-            }
-            if (index === 1) {
-                const tags = document.createElement("span");
-                tags.className = "clip-tags";
-                const frequency = frequencyBadge(clip);
-                if (frequency) tags.append(frequency);
-                if (clipStateEnabled) {
-                    const favorite = document.createElement("span");
-                    favorite.className = "favorite-badge";
-                    favorite.textContent = "Favori";
-                    favorite.hidden = !clip.favorite;
-                    const potential = document.createElement("span");
-                    potential.className = "potential-badge";
-                    potential.textContent = clip.potentialScore > 0
-                        ? `Potentiel favori · ${potentialPoints(clip)}` : "Potentiel favori";
-                    potential.hidden = !isPotential(clip);
-                    tags.append(favorite, potential);
-                }
-                cell.append(tags);
-            }
-            row.append(cell);
+        const main = document.createElement("span");
+        main.className = "clip-main";
+        const line = document.createElement("span");
+        line.className = "clip-line";
+        const callout = document.createElement("span");
+        callout.className = "clip-callout";
+        callout.textContent = library ? calloutName(clip, currentMatch) : clip.player;
+        const kindLabel = document.createElement("span");
+        kindLabel.className = "visually-hidden";
+        kindLabel.textContent = ` · ${kinds[clip.kind].label}`;
+        line.append(dot(), callout, kindLabel);
+        if (clipStateEnabled) {
+            const favorite = document.createElement("span");
+            favorite.className = "favorite-badge";
+            favorite.textContent = "★";
+            favorite.title = "Favori";
+            favorite.hidden = !clip.favorite;
+            line.append(favorite);
+        }
+        if (badge) line.append(badge);
+        const source = document.createElement("small");
+        source.className = "clip-source";
+        source.title = clip.source ?? "";
+        source.textContent = [library ? clip.player : kinds[clip.kind].label, `R${clip.round}`].join(" · ");
+        const frequency = frequencyBadge(clip);
+        if (frequency) source.append(" · ", frequency);
+        main.append(line, source);
+        row.append(main);
+        const score = clipScore(clip);
+        if (score !== undefined) {
+            const points = document.createElement("span");
+            points.className = "clip-points";
+            points.classList.toggle("is-potential", isPotential(clip));
+            points.textContent = score;
+            points.title = `Score ${potentialPoints(clip)}`;
+            row.append(points);
         }
         row.addEventListener("click", () => {
             playClip(clip);
@@ -1454,6 +1507,10 @@ function renderFilters(keepCurrent = false) {
             button.append(dot());
         }
         button.append(kind?.label ?? "Tous");
+        const count = document.createElement("span");
+        count.className = "kind-count";
+        button.append(count);
+        button.dataset.kind = key;
         button.setAttribute("aria-pressed", String(key === filter));
         button.addEventListener("click", () => {
             filter = key;
@@ -1477,6 +1534,7 @@ function renderRounds(current = "") {
 function switchMatch({ round = "", level = "upper", groupId, selectedId, fromAddress = false } = {}) {
     const previousMap = currentMatch?.map;
     currentMatch = catalogue.matches[Number(matchSelect.value)];
+    renderMapPicker();
     if (currentMatch?.map !== previousMap) {
         radarView?.reset();
         if (!fromAddress) {
@@ -1488,7 +1546,6 @@ function switchMatch({ round = "", level = "upper", groupId, selectedId, fromAdd
     byId("library-content").hidden = !currentMatch;
     byId("library-empty").hidden = Boolean(currentMatch);
     if (!currentMatch) {
-        setLibraryFullscreen(false);
         filtered = [];
         visible = [];
         selectClip(undefined);
@@ -1506,12 +1563,100 @@ function switchMatch({ round = "", level = "upper", groupId, selectedId, fromAdd
     revealSelectedRow();
 }
 
+// Sélecteur de carte avec l’emblème de chaque carte ; le menu natif reste la source de vérité.
+const mapPicker = document.querySelector(".map-picker");
+const mapButton = byId("map-button");
+const mapMenu = byId("map-menu");
+
+function mapEmblem(map) {
+    const frame = document.createElement("span");
+    frame.className = "map-emblem";
+    frame.setAttribute("aria-hidden", "true");
+    const image = document.createElement("img");
+    image.alt = "";
+    image.addEventListener("error", () => {
+        image.remove();
+        frame.textContent = mapLabel(map).charAt(0);
+    }, { once: true });
+    image.src = `maps/${map}.png`;
+    frame.append(image);
+    return frame;
+}
+
+function renderMapPicker() {
+    const matches = catalogue.matches;
+    mapPicker.classList.toggle("has-picker", matches.length > 0);
+    mapButton.hidden = matches.length === 0;
+    if (!matches.length) return;
+    const current = matches[Number(matchSelect.value)] ?? matches[0];
+    const name = document.createElement("span");
+    name.textContent = mapLabel(current.map);
+    mapButton.replaceChildren(mapEmblem(current.map), name);
+    mapButton.setAttribute("aria-label", `${byId("match-label").textContent} : ${mapLabel(current.map)}`);
+    mapMenu.replaceChildren(...matches.map((match, index) => {
+        const option = document.createElement("button");
+        option.type = "button";
+        option.className = "map-option";
+        option.setAttribute("role", "option");
+        option.setAttribute("aria-selected", String(match === current));
+        const label = document.createElement("span");
+        label.textContent = mapLabel(match.map);
+        const count = document.createElement("span");
+        count.className = "map-count";
+        count.textContent = match.clips.length ? match.clips.length.toLocaleString("fr-FR") : "";
+        option.append(mapEmblem(match.map), label, count);
+        option.addEventListener("click", () => {
+            closeMapMenu(true);
+            if (String(index) === matchSelect.value) return;
+            matchSelect.value = String(index);
+            matchSelect.dispatchEvent(new Event("change"));
+        });
+        return option;
+    }));
+}
+
+function openMapMenu() {
+    mapMenu.hidden = false;
+    mapButton.setAttribute("aria-expanded", "true");
+    (mapMenu.querySelector('[aria-selected="true"]') ?? mapMenu.firstElementChild)?.focus();
+}
+
+function closeMapMenu(focusButton = false) {
+    if (mapMenu.hidden) return;
+    mapMenu.hidden = true;
+    mapButton.setAttribute("aria-expanded", "false");
+    if (focusButton) mapButton.focus();
+}
+
+mapButton.addEventListener("click", () => (mapMenu.hidden ? openMapMenu() : closeMapMenu()));
+mapPicker.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !mapMenu.hidden) {
+        event.preventDefault();
+        closeMapMenu(true);
+    } else if ((event.key === "ArrowDown" || event.key === "ArrowUp") && event.target === mapButton && mapMenu.hidden) {
+        event.preventDefault();
+        openMapMenu();
+    } else if ((event.key === "ArrowDown" || event.key === "ArrowUp") && mapMenu.contains(event.target)) {
+        event.preventDefault();
+        const options = [...mapMenu.children];
+        const next = options.indexOf(event.target) + (event.key === "ArrowDown" ? 1 : -1);
+        options[(next + options.length) % options.length].focus();
+    }
+});
+document.addEventListener("pointerdown", (event) => {
+    if (!mapPicker.contains(event.target)) closeMapMenu();
+});
+mapPicker.addEventListener("focusout", (event) => {
+    if (!mapPicker.contains(event.relatedTarget)) closeMapMenu();
+});
+
 function updateMapOptions(preferred) {
     matchSelect.replaceChildren();
     catalogue.matches.forEach((match, index) => addOption(matchSelect, index, mapLabel(match.map)));
     const index = catalogue.matches.findIndex((match) => match.map === preferred);
     if (index >= 0) matchSelect.value = String(index);
     matchSelect.disabled = catalogue.matches.length === 0;
+    renderMapPicker();
 }
 
 portraitButton.hidden = !portrait;
@@ -1633,8 +1778,13 @@ if (library) {
     window.handleLibraryShortcut = handleLibraryShortcut;
     document.addEventListener("keydown", handleLibraryShortcut);
     document.body.classList.add("library-view");
-    document.querySelector("h1").textContent = "Votre prochain lancer décisif.";
+    document.querySelector("h1").textContent = "Vidéothèque";
     byId("match-label").textContent = "Carte";
+    const importButton = byId("open-import");
+    if (navigation?.openImport) {
+        importButton.hidden = false;
+        importButton.addEventListener("click", () => navigation.openImport("clips"));
+    }
     indexThrowFilters();
     if (navigation) window.restoreLibraryAddress = restoreLibraryAddress;
     else window.addEventListener("popstate", restoreLibraryAddress);

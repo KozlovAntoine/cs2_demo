@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "utilitaires-cs2-test",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["utility_app.py", "--port", "38474", "--no-open"],
+      "port": 38474
+    }
+  ]
+}

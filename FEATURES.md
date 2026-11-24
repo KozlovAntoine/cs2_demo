@@ -28,12 +28,14 @@ CS2 Utilities is a local, browser-based application for turning Counter-Strike 2
 ## Video library
 
 - Browse a unified library organized by map and open individual exported galleries.
+- Pick the map from a menu that shows each map's collection emblem and clip count.
+- See each clip in the list with a thumbnail taken just before the throw and its duration. Thumbnails are created when clips are exported, and a missing one is created the first time it is shown. `python clip_thumbnails.py` creates the missing thumbnails of every existing export.
 - Play clips in the browser and inspect their player, round, utility type, callout, and available throw information.
-- Filter clips by utility type, round, frequency, favorites, or unwatched status. Favorites and unwatched are mutually exclusive.
+- Filter clips by utility type, round, frequency, favorites, or unwatched status. Favorites and unwatched are mutually exclusive. Each utility type shows how many clips match the other filters.
 - Mark clips as favorites; opening a clip marks it as watched. These states are saved locally.
 - Use keyboard shortcuts: **F** toggles the selected clip's favorite state, **N** moves forward, and **B** moves backward through clip navigation.
-- Delete a selected clip after confirmation. Its MP4 is removed and the library and radar update accordingly; its throw positions are retained for duplicate detection.
-- Use fullscreen library view for a larger workspace.
+- Delete a selected clip after confirmation. Its MP4 and thumbnail are removed and the library and radar update accordingly; its throw positions are retained for duplicate detection.
+- On a wide screen, the list, the player and the radar each scroll on their own so the library fits in the window.
 - Preserve the current map, clip, radar group, and filters in the URL. Browser Back and Forward restore navigation state; copied links work on the same PC.
 
 ## Compilations and enemy POV

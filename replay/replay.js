@@ -566,7 +566,7 @@ function drawPlayers(stage, tick) {
         if (namesToggle.checked || player.id === selectedPlayer) labels.push([player.name, sx, sy - radius * 1.6, floorAlpha(z)]);
     }
     context.save();
-    context.font = `600 ${font}px "Inter CS2", Inter, "Segoe UI", sans-serif`;
+    context.font = `600 ${font}px "Geist CS2", "Segoe UI", sans-serif`;
     context.textAlign = "center";
     context.textBaseline = "bottom";
     context.lineJoin = "round";

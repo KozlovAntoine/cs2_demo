@@ -10,25 +10,29 @@
   <script defer src="gallery.js"></script>
 </head>
 <body>
-  <main>
-    <header>
-      <div>
+  <main class="library-page">
+    <header class="library-header">
+      <div class="library-title">
         <h1>Utilitaires CS2</h1>
-        <p class="library-intro">Explorez, apprenez et retrouvez vos repères en jeu.</p>
-        <p id="demo-name"></p>
+        <span class="title-separator" aria-hidden="true">/</span>
+        <div class="map-picker">
+          <label for="match"><span id="match-label">Démo</span> <select id="match"></select></label>
+          <button id="map-button" class="map-button" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="map-menu" hidden></button>
+          <div id="map-menu" class="map-menu" role="listbox" aria-labelledby="match-label" hidden></div>
+        </div>
       </div>
+      <input id="clip-search" type="search" maxlength="64" aria-label="Rechercher un callout" placeholder="Rechercher un callout…" hidden>
       <div class="map-controls">
-        <label for="match"><span id="match-label">Démo</span> <select id="match"></select></label>
         <button id="edit-callouts" class="zone-button" type="button" hidden>Éditer les zones</button>
+        <button id="open-import" class="primary-button" type="button" hidden>Importer une démo</button>
       </div>
+      <p id="demo-name"></p>
     </header>
     <p id="library-empty" class="library-message" hidden>Aucune vidéo dans la vidéothèque. Lance un export pour ajouter tes premiers clips.</p>
     <div id="library-content">
-    <div class="workspace">
-      <div class="details">
         <div class="toolbar">
-          <input id="clip-search" type="search" maxlength="64" aria-label="Rechercher un callout" placeholder="Rechercher un callout…" hidden>
           <div id="types" role="group" aria-label="Filtrer par utilitaire"></div>
+          <span class="toolbar-separator" aria-hidden="true"></span>
           <div class="toolbar-filters">
             <button id="favorites" type="button" aria-pressed="false" hidden>Favoris</button>
             <button id="unwatched" type="button" aria-pressed="false" hidden>À traiter</button>
@@ -56,35 +60,13 @@
             </details>
           </div>
         </div>
-        <section id="video-panel" class="panel" aria-labelledby="clip-title">
-          <div class="section-bar">
-            <h2 id="clip-title">Clip</h2>
-            <div class="clip-review-controls">
-              <button id="skip-intro" class="zone-button" type="button" aria-pressed="false">Début à 2 s</button>
-              <button id="dismiss-potential" class="zone-button" type="button" hidden>Pas potentiel</button>
-            </div>
-            <button id="edit-clip-callout" class="zone-button" type="button" hidden>Modifier la zone</button>
-            <span id="clip-meta"></span>
-          </div>
-          <div class="player">
-            <video id="video" controls playsinline preload="metadata" hidden></video>
-            <p id="video-empty" role="status"></p>
-          </div>
-          <div id="clip-actions" class="clip-actions" hidden>
-            <button id="portrait-action" type="button">Générer vidéo 9:16</button>
-            <button id="compilation-toggle-clip" type="button" aria-keyshortcuts="C" hidden>+ Compilation</button>
-            <button id="delete-clip" class="delete-clip" type="button" hidden>Supprimer</button>
-            <button id="favorite-clip" class="favorite-button" type="button" aria-keyshortcuts="F" aria-pressed="false" hidden>☆</button>
-            <p id="portrait-status" role="status"></p>
-          </div>
-          <p id="delete-status" class="delete-status" role="status" hidden></p>
-        </section>
+    <div class="workspace">
         <section id="clips-panel" class="panel" aria-labelledby="list-title">
           <div class="section-bar">
             <h2 id="list-title">Lancers</h2>
+            <span id="count" aria-live="polite"></span>
             <button id="clip-sort" class="zone-button" type="button" hidden>Tri par round</button>
             <button id="compilation-open" class="zone-button" type="button" aria-pressed="false" hidden>Compilation 9:16</button>
-            <span id="count" aria-live="polite"></span>
           </div>
           <p id="clip-state-error" class="delete-status" role="alert" hidden></p>
           <div id="clips" class="clip-list" aria-label="Clips filtrés"></div>
@@ -94,9 +76,36 @@
             <button id="clip-next-page" class="zone-button" type="button" aria-controls="clips">Suivante</button>
           </nav>
         </section>
-      </div>
-      <aside class="library-inspector" aria-label="Le lancer, en détail">
-        <h2 class="inspector-title">Le lancer, en détail</h2>
+        <section id="video-panel" class="panel" aria-labelledby="clip-title">
+          <div class="player">
+            <video id="video" controls playsinline preload="metadata" hidden></video>
+            <p id="video-empty" role="status"></p>
+          </div>
+          <div class="clip-heading">
+            <div class="clip-heading-text">
+              <p id="clip-kicker" class="clip-kicker"></p>
+              <h2 id="clip-title">Clip</h2>
+              <p id="clip-meta"></p>
+            </div>
+            <div id="clip-score" class="clip-score" hidden>
+              <span class="clip-score-label">Score</span>
+              <strong><span id="clip-score-value"></span><small>/100</small></strong>
+              <span class="clip-score-bar" aria-hidden="true"><span id="clip-score-fill"></span></span>
+            </div>
+          </div>
+          <div id="clip-actions" class="clip-actions" hidden>
+            <button id="portrait-action" type="button">Générer vidéo 9:16</button>
+            <button id="favorite-clip" class="favorite-button" type="button" aria-keyshortcuts="F" aria-pressed="false" hidden>☆ Favori</button>
+            <button id="edit-clip-callout" class="zone-button" type="button" hidden>Modifier la zone</button>
+            <button id="skip-intro" class="zone-button" type="button" aria-pressed="false">Début à 2 s</button>
+            <button id="dismiss-potential" class="zone-button" type="button" hidden>Pas potentiel</button>
+            <button id="compilation-toggle-clip" type="button" aria-keyshortcuts="C" hidden>+ Compilation</button>
+            <button id="delete-clip" class="delete-clip" type="button" hidden>Supprimer</button>
+            <p id="portrait-status" role="status"></p>
+          </div>
+          <p id="delete-status" class="delete-status" role="status" hidden></p>
+        </section>
+      <aside class="library-inspector" aria-label="Radar et commandes">
       <section id="radar-panel" class="panel" aria-labelledby="radar-title">
         <div class="section-bar">
           <h2 id="radar-title">Radar</h2>
@@ -141,7 +150,7 @@
         </div>
       </section>
         <section id="throw-console" class="panel throw-console" aria-labelledby="throw-console-title" hidden>
-          <h2 id="throw-console-title">Reproduire ce lancer</h2>
+          <h2 id="throw-console-title">Reproduire en jeu</h2>
             <div id="throw-controls" class="throw-controls" hidden>
               <span id="throw-controls-label" class="lineup-label">Commandes</span>
               <div id="throw-keys" class="throw-keys" role="group" aria-labelledby="throw-controls-label"></div>
