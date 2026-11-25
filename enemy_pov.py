@@ -22,7 +22,7 @@ MAX_POVS = {"smoke": 1, "flash": 2, "he": 2, "molo": 2}
 DAMAGE_WEAPONS = {"he": {"HE Grenade"}, "molo": {"Molotov", "Incendiary Grenade"}}
 # Damage counted after the activation: an HE hits at once, an incendiary burns for a few seconds.
 DAMAGE_WINDOW_SECONDS = {"he": 0.25, "molo": 8}
-# A light flash or a scratch does not make an interesting point of view.
+# A light flash or a scratch does not make an interesting point of view, unless the victim dies of it.
 MIN_BLIND_SECONDS = 1.0
 MIN_DAMAGE = 5
 # A kill this soon after the hit counts as helped by the utility, like CS2's own assists.
@@ -30,12 +30,12 @@ KILL_FOLLOW_SECONDS = 4
 FLASH_FOLLOW_SECONDS = 1
 # Switch slightly before the effect so the victim sees the grenade arrive.
 SWITCH_LEAD_SECONDS = {"flash": 0.7, "he": 0.4, "molo": 0.4, "smoke": 0.3}
-# Time on a victim before the camera moves to the next one, and after a kill.
+# Time on a victim from the camera switch, and after a kill.
 HOLD_SECONDS = 2.0
 AFTER_KILL_SECONDS = 0.9
 MIN_STRETCH_SECONDS = 1.0
-# The grenade camera stays on the detonation this long, then the enemy view goes back in time to this long
-# before it: the detonation is seen twice, once from each side.
+# The grenade camera stays on the detonation this long, then each enemy view goes back in time to this long
+# before it: the detonation is seen again from every enemy.
 REPLAY_AFTER_SECONDS = 1.0
 REPLAY_BEFORE_SECONDS = 1.0
 # How far after the activation a clip may be extended to show a kill.
@@ -124,13 +124,15 @@ def flash_candidates(clip, flashes, kills, tick_rate):
     activation = clip["activationTick"]
     blinded = {}
     for tick, victim, name, duration in flashes.get(clip["steamId"], ()):
-        if abs(tick - activation) <= 2 and victim != clip["steamId"] and duration >= MIN_BLIND_SECONDS:
+        if abs(tick - activation) <= 2 and victim != clip["steamId"] and duration > 0:
             if duration > blinded.get(victim, (0,))[0]:
                 blinded[victim] = (duration, name)
     found = []
     for victim, (duration, name) in blinded.items():
         blind_end = activation + round(duration * tick_rate)
         kill = helped_kill(kills, victim, clip, activation, blind_end, tick_rate, flash=True)
+        if duration < MIN_BLIND_SECONDS and kill is None:
+            continue
         found.append({"steamId": victim, "name": name, "event": activation, "kill": kill,
                       "effect": "blind", "value": round(duration, 1), "rank": duration})
     return found
@@ -155,29 +157,35 @@ def damage_candidates(clip, damages, kills, tick_rate):
     return found
 
 
-def stretches(clip, chosen, tick_rate):
-    """Camera switches for the chosen victims, in the order they are affected and killed."""
+def replays(clip, chosen, tick_rate):
+    """One replay per chosen victim, each from just before the detonation, in the order they are killed.
+
+    Returns the victims with their [tick, stop] demo range, and the tick where the grenade camera stops.
+    """
     kind, activation = clip["kind"], clip["activationTick"]
     lead = round(SWITCH_LEAD_SECONDS[kind] * tick_rate)
     limit = activation + round(MAX_AFTER_ACTIVATION[kind] * tick_rate)
     shortest = round(MIN_STRETCH_SECONDS * tick_rate)
-    cursor = max(clip["launchTick"] + tick_rate // 4, clip["startTick"] + 1)
-    # Victims who die first are shown first, so that nobody is watched after their death.
+    after = round(REPLAY_AFTER_SECONDS * tick_rate)
+    rewind = round((REPLAY_AFTER_SECONDS + REPLAY_BEFORE_SECONDS) * tick_rate)
+    # Victims who die first are shown first.
     chosen = sorted(chosen, key=lambda victim: (victim["kill"] if victim["kill"] is not None else math.inf,
                                                 victim["event"], -victim["rank"]))
-    placed, end = [], clip["endTick"]
-    for number, victim in enumerate(chosen):
-        start = max(cursor, victim["event"] - lead)
-        if start > limit - shortest or (victim["kill"] is not None and victim["kill"] < start + tick_rate // 2):
-            continue
+    placed = []
+    for victim in chosen:
+        switch = victim["event"] - lead
+        # Back to 1 s before the detonation, or 2 s before a later hit (someone walking into the fire).
+        start = max(clip["startTick"], max(activation + after, switch) - rewind)
         if victim["kill"] is not None:
             stop = min(limit, victim["kill"] + round(AFTER_KILL_SECONDS * tick_rate))
         else:
-            stop = min(limit, start + round(HOLD_SECONDS * tick_rate))
-        placed.append({**victim, "tick": start})
-        cursor = stop
-        end = max(end, stop)
-    return placed, end
+            stop = min(limit, max(switch, start) + round(HOLD_SECONDS * tick_rate))
+        if stop - start >= shortest:
+            placed.append({**victim, "tick": start, "stop": stop})
+    if not placed:
+        return [], None
+    cut = max(activation + after, min(victim["event"] - lead for victim in placed))
+    return placed, cut
 
 
 def smoke_watcher(clip, positions, tick_rate):
@@ -257,47 +265,35 @@ def assign_enemy_pov(folder, demo, clips, tick_rate):
             candidates = damage_candidates(clip, damages, kills, tick_rate)
         # Kills the utility helped come first, then the strongest effect.
         candidates.sort(key=lambda victim: (victim["kill"] is None, -victim["rank"]))
-        placed, end = stretches(clip, candidates[:MAX_POVS[kind]], tick_rate)
+        placed, cut = replays(clip, candidates[:MAX_POVS[kind]], tick_rate)
         if not placed:
             continue
-        clip["endTick"] = end
-        replay = replay_ticks(clip, placed[0]["tick"], tick_rate)
-        if replay:
-            clip["replay"] = replay
-            placed[0] = {**placed[0], "tick": replay["fromTick"]}
-        else:
-            clip.pop("replay", None)
+        clip["replay"] = {"cutTick": cut, "parts": [[victim["tick"], victim["stop"]] for victim in placed]}
+        clip["endTick"] = max(clip["endTick"], *(victim["stop"] for victim in placed))
         clip["povs"] = [{
             "steamId": victim["steamId"], "player": names.get(victim["steamId"]) or victim["name"] or victim["steamId"],
-            "tick": victim["tick"], "offset": video_offset(clip, victim["tick"], tick_rate),
+            "tick": victim["tick"], "offset": round(offset / tick_rate, 3),
             "effect": victim["effect"], "value": victim["value"], "killed": victim["kill"] is not None,
-        } for victim in placed]
+        } for victim, offset in zip(placed, part_offsets(clip))]
         assigned += 1
     return assigned
 
 
-def replay_ticks(clip, first_switch, tick_rate):
-    """Where the grenade camera stops (cutTick) and where the enemy view starts again (fromTick), in demo ticks."""
-    cut = max(clip["activationTick"] + round(REPLAY_AFTER_SECONDS * tick_rate), first_switch)
-    start = max(clip["startTick"], cut - round((REPLAY_AFTER_SECONDS + REPLAY_BEFORE_SECONDS) * tick_rate))
-    if cut >= clip["endTick"] - tick_rate // 2 or start >= cut:
-        return None
-    return {"cutTick": cut, "fromTick": start}
-
-
-def video_offset(clip, tick, tick_rate):
-    """Seconds into the clip's video at which the demo tick is shown, after the replay cut for enemy cameras."""
-    replay = clip.get("replay")
-    if replay and tick >= replay["fromTick"]:
-        return round((replay["cutTick"] - clip["startTick"] + tick - replay["fromTick"]) / tick_rate, 3)
-    return round((tick - clip["startTick"]) / tick_rate, 3)
+def part_offsets(clip):
+    """Where each enemy replay starts in the clip's video, in ticks after the clip start."""
+    replay = clip["replay"]
+    offset, offsets = replay["cutTick"] - clip["startTick"], []
+    for first, last in replay["parts"]:
+        offsets.append(offset)
+        offset += last - first
+    return offsets
 
 
 def recorded_parts(clip):
-    """The demo tick ranges recorded for a clip: one, or two when its enemy view replays the detonation."""
+    """The demo tick ranges recorded for a clip: the grenade, then one replay per enemy view."""
     replay = clip.get("replay") if clip_povs(clip) else None
-    if replay:
-        return [(clip["startTick"], replay["cutTick"]), (replay["fromTick"], clip["endTick"])]
+    if replay and replay.get("parts"):
+        return [(clip["startTick"], replay["cutTick"]), *(tuple(part) for part in replay["parts"])]
     return [(clip["startTick"], clip["endTick"])]
 
 

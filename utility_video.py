@@ -224,11 +224,12 @@ def create_video_job(demo, clips, tick_rate, job_folder, capture_height=720):
         enemies = [{"tick": pov["tick"], "playerSteamId": pov["steamId"], "playerName": pov["player"]} for pov in povs]
         grenade = {key: clip[key] for key in ("launchTick", "activationTick", "endTick", "flight", "impact", "yaw")}
         parts = recorded_parts(clip)
-        if len(parts) == 2:
-            # The grenade camera runs to the cut, then the demo goes back for the enemy views.
+        if len(parts) > 1:
+            # The grenade camera runs to the cut, then the demo goes back once for each enemy view.
             grenade["cameraEndTick"] = parts[0][1]
-            enemies[0] = {**enemies[0], "tick": parts[1][0] - tick_rate // 2}
-            plan = [(parts[0], grenade, [thrower]), (parts[1], None, enemies)]
+            plan = [(parts[0], grenade, [thrower])]
+            plan += [(part, None, [{**enemy, "tick": part[0] - tick_rate // 2}])
+                     for part, enemy in zip(parts[1:], enemies)]
         else:
             if povs:
                 # Older clips: the grenade camera stops when the first enemy point of view starts.
@@ -314,7 +315,7 @@ def join_videos(parts, target):
 
 
 def clip_videos(render_folder, clips, *, completed_only=False):
-    """The finished video of each clip, {clip number: path}, its sequences joined when it has two."""
+    """The finished video of each clip, {clip number: path}, its sequences joined when it has several."""
     videos = sequence_videos(render_folder)
     logger = current_job_log()
     parts = {}

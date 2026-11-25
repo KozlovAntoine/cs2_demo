@@ -28,7 +28,8 @@ from utility_video import analyze_demo, clip_videos, create_video_job, describe_
 HQ_FOLDER = "hq"
 HQ_HEIGHT = 1080
 # 2: up to two enemy POVs per clip, chat hidden. 3: the enemy view replays the detonation.
-HQ_VERSION = 3
+# 4: each enemy view replays it, flashed enemies killed with the flash's help count.
+HQ_VERSION = 4
 SEARCH_FOLDERS = ("Downloads", "Desktop", "Documents")
 # HLTV demos are named team-vs-team-m1-map.dem, inside event-team-vs-team-bo3-<id>.rar archives.
 DEMO_NAME = re.compile(r"^(?P<first>.+?)-vs-(?P<second>.+?)-m\d+-", re.I)
