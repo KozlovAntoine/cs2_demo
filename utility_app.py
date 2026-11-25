@@ -32,6 +32,7 @@ from compilation_library import (
     update_compilation,
 )
 import youtube_publish
+from explorer_window import show_in_explorer
 from compilation_capture import MissingDemos, prepare_hq_clips
 from compilation_video import COMPILATION_FOLDER, DESCRIPTION_MAX, MAX_CLIPS, generate_compilation
 from portrait_video import existing_portrait, generate_portrait, portrait_folder
@@ -481,8 +482,7 @@ class App:
             raise ValueError("Aucune compilation dans la vidéothèque.")
         if name:
             # Explorer opens the folder with this video selected.
-            video = compilation_video(self.output, name)
-            subprocess.Popen(["explorer", f"/select,{video}"], creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            show_in_explorer(compilation_video(self.output, name))
             return
         os.startfile(folder, "explore")
 
