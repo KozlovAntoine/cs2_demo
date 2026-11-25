@@ -155,6 +155,7 @@ function showJob(job) {
     else if (job?.busy) showStatus("Un autre traitement est en cours (import ou rendu).");
     else if (job?.file) showStatus(`Terminé · ${job.file}`);
     else showStatus("");
+    renderMissingDemos(byId("comp-missing"), job?.missingDemos, navigation?.openImport ? () => navigation.openImport("clips") : null);
     renderDraft();
     clearTimeout(jobTimer);
     if (job?.running || job?.busy) jobTimer = setTimeout(refreshJob, 1500);
@@ -180,6 +181,11 @@ byId("comp-pick").addEventListener("click", () => {
     if (navigation?.openLibrary) navigation.openLibrary();
     else location.href = "/library/index.html";
 });
+byId("comp-recapture").checked = state.recapture !== false;
+byId("comp-recapture").addEventListener("change", (event) => {
+    state.recapture = event.target.checked;
+    persist();
+});
 byId("comp-clear").addEventListener("click", () => {
     state.ids = [];
     state.descriptionEdited = false;
@@ -202,7 +208,7 @@ byId("comp-description-copy").addEventListener("click", async (event) => {
     setTimeout(() => { event.target.textContent = "Copier"; }, 1500);
 });
 byId("comp-start").addEventListener("click", async () => {
-    const payload = compilationRequest(entries(), byId("comp-description").value);
+    const payload = compilationRequest(entries(), byId("comp-description").value, byId("comp-recapture").checked);
     byId("comp-start").dataset.busy = "true";
     showStatus("Démarrage…");
     renderDraft();

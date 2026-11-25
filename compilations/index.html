@@ -41,10 +41,13 @@
           </div>
           <textarea id="comp-description" rows="12" maxlength="2200" spellcheck="false"></textarea>
           <p class="comp-hint"><span id="comp-description-length"></span> · La 1<sup>re</sup> ligne sert de titre YouTube.</p>
+          <label class="compilation-recapture" title="Relance CS2 pour les clips pas encore faits en 1080p, avec la vue de l’ennemi touché quand il est proche, et un viseur vert statique. Ta config CS2 est remise en place après."><input id="comp-recapture" type="checkbox" checked>
+            <span>Réenregistrer en 1080p avec la POV ennemie <small>(lance CS2)</small></span></label>
           <div class="comp-actions">
             <button id="comp-start" class="primary-button comp-start" type="button">Générer la compilation</button>
           </div>
           <p id="comp-status" class="comp-status" role="status"></p>
+          <div id="comp-missing" class="missing-demos" hidden></div>
         </div>
       </div>
     </section>

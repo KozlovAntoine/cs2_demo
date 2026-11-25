@@ -18,6 +18,10 @@ WALK = 1 << 16
 DIRECTION_KEYS = {"W": 1 << 3, "Q": 1 << 9, "S": 1 << 4, "D": 1 << 10}
 STRENGTH_MODES = {0.0: "right", 0.5: "middle", 1.0: "left"}
 ATTACK_MODES = {ATTACK: "left", ATTACK2: "right", ATTACK | ATTACK2: "middle"}
+# Buttons whose hold is followed during the clip, so the compilation keys light up while the thrower holds them.
+HELD_BUTTONS = {**DIRECTION_KEYS, "walk": WALK, "crouch": DUCK, "jump": JUMP, "attack": ATTACK, "attack2": ATTACK2}
+# The camera stays on the thrower a little after the release.
+HELD_TAIL_SECONDS = 0.5
 
 
 def finite(value):
@@ -91,6 +95,46 @@ def throw_controls(samples, kind, launch_tick, tick_rate):
     if all(finite(value) for value in [*xyz, *angles]):
         result.update(position=[round(value, 6) for value in xyz], angles=[round(value, 6) for value in angles])
     return result or None
+
+
+def held_buttons(samples, start_tick, tick_rate):
+    """When each button is held, as {name: [[from, to], ...]} in seconds after start_tick. Samples follow the ticks."""
+    spans, since, last = {}, {}, None
+    for sample in samples:
+        mask = button_mask(sample)
+        if mask is None:
+            continue
+        tick = sample["tick"]
+        for name, bit in HELD_BUTTONS.items():
+            if mask & bit and name not in since:
+                since[name] = tick
+            elif not mask & bit and name in since:
+                spans.setdefault(name, []).append((since.pop(name), tick))
+        last = tick
+    for name, tick in since.items():
+        spans.setdefault(name, []).append((tick, last + 1))
+    return {name: [[round((first - start_tick) / tick_rate, 3), round((end - start_tick) / tick_rate, 3)]
+                   for first, end in ranges] for name, ranges in spans.items()}
+
+
+def add_held_keys(demo, clips, tick_rate):
+    """Records in each clip's lineup when its thrower holds each button, from the clip start to just after the throw."""
+    tail = round(tick_rate * HELD_TAIL_SECONDS)
+    windows = {id(clip): range(max(0, clip["startTick"]), clip["launchTick"] + tail + 1)
+               for clip in clips if clip.get("lineup")}
+    if not windows:
+        return
+    players = sorted({int(clip["steamId"]) for clip in clips if id(clip) in windows})
+    ticks = sorted({tick for window in windows.values() for tick in window})
+    parsed = open_demo_parser(demo).parse_ticks(["buttons", "usercmd_buttonstate_1"], players=players, ticks=ticks)
+    samples = {(sample["steamid"], sample["tick"]): sample for sample in parsed.to_dict("records")}
+    for clip in clips:
+        if (window := windows.get(id(clip))) is None:
+            continue
+        player = int(clip["steamId"])
+        held = [samples[player, tick] for tick in window if (player, tick) in samples]
+        if held:
+            clip["lineup"]["held"] = held_buttons(held, clip["startTick"], tick_rate)
 
 
 def open_demo_parser(demo):

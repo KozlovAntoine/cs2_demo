@@ -189,12 +189,15 @@
             <textarea id="compilation-description" rows="9" maxlength="2200" spellcheck="false"></textarea>
             <p class="compilation-caption-hint"><span id="compilation-description-length"></span> · La 1<sup>re</sup> ligne sert de titre YouTube. Enregistrée en .txt à côté de la vidéo.</p>
           </div>
+          <label class="compilation-recapture" title="Relance CS2 pour les clips pas encore faits en 1080p, avec la vue de l’ennemi touché quand il est proche, et un viseur vert statique. Ta config CS2 est remise en place après."><input id="compilation-recapture" type="checkbox" checked>
+            <span>Réenregistrer en 1080p avec la POV ennemie <small>(lance CS2)</small></span></label>
           <div class="compilation-actions">
             <button id="compilation-start" class="compilation-start" type="button">Générer la compilation</button>
             <button id="compilation-folder" class="zone-button" type="button" hidden>Ouvrir le dossier</button>
             <button id="compilation-history" class="zone-button" type="button" hidden>Toutes les compilations →</button>
           </div>
           <p id="compilation-status" class="compilation-status" role="status"></p>
+          <div id="compilation-missing" class="missing-demos" hidden></div>
         </section>
       </aside>
     </div>

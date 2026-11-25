@@ -123,7 +123,7 @@ def list_compilations(output):
 
 
 def compilation_thumbnail(output, stem):
-    """A 9:16 poster taken 1.5 s into the video, made the first time it is asked for."""
+    """A 9:16 poster taken 2.5 s into the video, once the titles are written, made the first time it is asked for."""
     video = compilation_video(output, f"{stem}.mp4")
     # Kept apart so that each compilation folder only holds what is worth opening.
     folder = compilation_folder(output) / THUMBNAIL_FOLDER
@@ -132,7 +132,7 @@ def compilation_thumbnail(output, stem):
         return thumbnail
     folder.mkdir(exist_ok=True)
     ffmpeg = ffmpeg_tools()[0]
-    run([ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-ss", "1.5", "-i", video,
+    run([ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-ss", "2.5", "-i", video,
          "-frames:v", "1", "-vf", "scale=360:-2", "-q:v", "4", thumbnail], capture_output=True, encoding="utf-8")
     if not thumbnail.is_file():
         raise ValueError("Miniature indisponible.")

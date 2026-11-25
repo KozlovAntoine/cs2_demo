@@ -32,6 +32,7 @@ from compilation_library import (
     update_compilation,
 )
 import youtube_publish
+from compilation_capture import MissingDemos, prepare_hq_clips
 from compilation_video import COMPILATION_FOLDER, DESCRIPTION_MAX, MAX_CLIPS, generate_compilation
 from portrait_video import existing_portrait, generate_portrait, portrait_folder
 from replay_library import delete_replay, list_replays, load_replay, replay_name, saved_demo, storage_usage
@@ -425,9 +426,10 @@ class App:
         with self.lock:
             mine = self.job.get("compilation") is True
             running = mine and self.job["state"] == "running"
-            return {"busy": self.busy(), "running": running, "phase": self.job.get("messages", [""])[-1] if running else None,
+            return {"busy": self.busy(), "running": running, "phase": (self.job.get("messages") or [""])[-1] if running else None,
                     "error": self.job.get("error") if mine else None,
-                    "file": self.job.get("file") if mine and self.job["state"] == "complete" else None}
+                    "file": self.job.get("file") if mine and self.job["state"] == "complete" else None,
+                    "missingDemos": self.job.get("missingDemos") if mine else None}
 
     def start_compilation(self, data):
         entries = data.get("clips")
@@ -448,12 +450,30 @@ class App:
             description = data.get("description")
             description = description.strip()[:DESCRIPTION_MAX] if isinstance(description, str) else ""
 
+            recapture = data.get("recapture", True) is not False
+
             def render_compilation(report):
+                if recapture:
+                    # Clips are captured again in 1080p with the enemy POV; captures already made are reused.
+                    try:
+                        hq = prepare_hq_clips(self.output, find_csdm(self.csdm), [item["reference"] for item in items],
+                                              report)
+                    except MissingDemos as error:
+                        with self.lock:
+                            self.job["missingDemos"] = error.missing
+                        raise
+                    for item in items:
+                        if found := hq.get((item["reference"]["exportId"], item["reference"]["file"])):
+                            item["file"] = found["file"]
+                            # The new capture's timing replaces the library clip's.
+                            item["clip"] = {key: value for key, value in item["clip"].items() if key not in ("pov", "povs")}
+                            item["clip"]["povs"] = found["povs"]
                 target = generate_compilation(self.output, items, report, description)
                 return {"file": target.name}
 
             return self.start_job(render_compilation, log_kind="compilation", controllable=True,
-                                  description=f"Compilation 9:16 · {len(items)} clips", compilation=True)
+                                  description=f"Compilation 9:16 · {len(items)} clips · réenregistrement {'oui' if recapture else 'non'}",
+                                  compilation=True)
 
     def open_compilations(self, name=None):
         folder = self.output / COMPILATION_FOLDER

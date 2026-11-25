@@ -17,9 +17,10 @@ from pathlib import Path, PurePosixPath
 from capture_progress import CaptureProgress
 from clip_library import CATALOGUE_PREFIX, record_throw_usage, throw_references
 from clip_thumbnails import create_thumbnails
+from cs2_crosshair import CROSSHAIR_COMMANDS, standard_crosshair
 from csdm_capture_pause import shorten_capture_pause
 from demo_imports import demo_fingerprint, read_demo_imports, record_demo_import
-from enemy_pov import assign_enemy_pov
+from enemy_pov import assign_enemy_pov, clip_povs, recorded_parts
 from favorite_throw_context import extract_context
 from grenade_data import KINDS, UTILITY_KINDS, read_clips
 from job_control import JobCancelled, check_job_cancelled, current_control, job_checkpoint
@@ -28,7 +29,7 @@ from replay_library import save_replay_demo
 from round_replay import demo_header, write_round_replay
 from throw_groups import RADAR_GROUP_RADIUS, THROW_GROUP_SIZE_UNITS, group_throws
 from throw_index import record_throw_index
-from throw_inputs import add_throw_inputs
+from throw_inputs import add_held_keys, add_throw_inputs
 
 
 ROOT = Path(__file__).resolve().parent
@@ -203,40 +204,58 @@ def publish_radar(radar, out):
     return published
 
 
+def sequence_parts(clips):
+    """Each recorded sequence as (clip number, startTick, endTick), numbered from 1 in this order."""
+    return [(number, start, end) for number, clip in enumerate(clips, 1) for start, end in recorded_parts(clip)]
+
+
 def create_video_job(demo, clips, tick_rate, job_folder, capture_height=720):
     job_folder.mkdir()
     render_folder = job_folder / "video"
     render_folder.mkdir()
     script = job_folder / "camera.js"
-    camera_data = [{key: clip[key] for key in ("launchTick", "activationTick", "endTick", "flight", "impact", "yaw")}
-                   for clip in clips]
-    for data, clip in zip(camera_data, clips):
-        if pov := clip.get("pov"):
-            # The grenade camera stops when the enemy point of view starts.
-            data["cameraEndTick"] = pov["tick"]
-    script.write_text("{\nconst grenadeClips = " + json.dumps(camera_data, separators=(",", ":"), allow_nan=False) + ";\n"
-                      + (ROOT / "follow-grenade.js").read_text(encoding="utf-8") + "\n}\n", encoding="utf-8")
+    # One entry per sequence: the grenade camera of the clip, or null where an enemy view replays the detonation.
+    camera_data = []
     sequences = []
     for number, clip in enumerate(clips, 1):
-        start = clip["startTick"]
-        launch = clip["launchTick"]
-        cfg = "\n".join([
-            f'mirv_script_load "{script.as_posix()}"',
-            f"mirv_script_exec globalThis.csUtilityVideo({number})",
-            "mirv_cmd clear",
-            "cl_demo_freecam 0",
-            f'mirv_cmd addAtTick {launch} "spec_mode 6"',
-        ])
-        cameras = [{"tick": start - tick_rate // 2, "playerSteamId": clip["steamId"], "playerName": clip["player"]}]
-        if pov := clip.get("pov"):
-            cameras.append({"tick": pov["tick"], "playerSteamId": pov["steamId"], "playerName": pov["player"]})
-        sequences.append({
-            "number": number, "startTick": start, "endTick": clip["endTick"], "cfg": cfg,
-            "playerCameras": cameras,
-            "cameras": [], "playersOptions": [], "showXRay": False, "showAssists": True,
-            "showOnlyDeathNotices": False, "deathNoticesDuration": 5, "recordAudio": True,
-            "playerVoicesEnabled": False,
-        })
+        start, launch = clip["startTick"], clip["launchTick"]
+        povs = clip_povs(clip)
+        thrower = {"tick": start - tick_rate // 2, "playerSteamId": clip["steamId"], "playerName": clip["player"]}
+        enemies = [{"tick": pov["tick"], "playerSteamId": pov["steamId"], "playerName": pov["player"]} for pov in povs]
+        grenade = {key: clip[key] for key in ("launchTick", "activationTick", "endTick", "flight", "impact", "yaw")}
+        parts = recorded_parts(clip)
+        if len(parts) == 2:
+            # The grenade camera runs to the cut, then the demo goes back for the enemy views.
+            grenade["cameraEndTick"] = parts[0][1]
+            enemies[0] = {**enemies[0], "tick": parts[1][0] - tick_rate // 2}
+            plan = [(parts[0], grenade, [thrower]), (parts[1], None, enemies)]
+        else:
+            if povs:
+                # Older clips: the grenade camera stops when the first enemy point of view starts.
+                grenade["cameraEndTick"] = povs[0]["tick"]
+            plan = [(parts[0], grenade, [thrower, *enemies])]
+        for (part_start, part_end), camera, cameras in plan:
+            sequence = len(sequences) + 1
+            camera_data.append(camera)
+            cfg = [
+                f'mirv_script_load "{script.as_posix()}"',
+                f"mirv_script_exec globalThis.csUtilityVideo({sequence})",
+                "mirv_cmd clear",
+                "cl_demo_freecam 0",
+                # The same static green crosshair in every clip, whatever the player used.
+                *CROSSHAIR_COMMANDS,
+            ]
+            if camera:
+                cfg.append(f'mirv_cmd addAtTick {launch} "spec_mode 6"')
+            sequences.append({
+                "number": sequence, "startTick": part_start, "endTick": part_end, "cfg": "\n".join(cfg),
+                "playerCameras": cameras,
+                "cameras": [], "playersOptions": [], "showXRay": False, "showAssists": True,
+                "showOnlyDeathNotices": False, "deathNoticesDuration": 5, "recordAudio": True,
+                "playerVoicesEnabled": False,
+            })
+    script.write_text("{\nconst grenadeClips = " + json.dumps(camera_data, separators=(",", ":"), allow_nan=False) + ";\n"
+                      + (ROOT / "follow-grenade.js").read_text(encoding="utf-8") + "\n}\n", encoding="utf-8")
     config = {
         "demoPath": str(demo), "outputFolderPath": str(render_folder), "recordingSystem": "HLAE",
         "recordingOutput": "video", "encoderSoftware": "FFmpeg",
@@ -256,9 +275,15 @@ def sequence_videos(render_folder):
     return {file.name: file for file in render_folder.rglob("sequence-*.mp4")}
 
 
+def video_tools():
+    folder = Path.home() / ".csdm" / "ffmpeg" / "bin"
+    ffmpeg = folder / "ffmpeg.exe" if (folder / "ffmpeg.exe").is_file() else shutil.which("ffmpeg")
+    ffprobe = folder / "ffprobe.exe" if (folder / "ffprobe.exe").is_file() else shutil.which("ffprobe")
+    return ffmpeg, ffprobe
+
+
 def completed_video(file):
-    bundled = Path.home() / ".csdm" / "ffmpeg" / "bin" / "ffprobe.exe"
-    probe = str(bundled) if bundled.is_file() else shutil.which("ffprobe")
+    probe = video_tools()[1]
     if not probe:
         return False
     try:
@@ -270,26 +295,63 @@ def completed_video(file):
         return False
 
 
+def join_videos(parts, target):
+    """Puts the sequences of one clip end to end, without encoding them again."""
+    ffmpeg = video_tools()[0]
+    if not ffmpeg:
+        raise ValueError("FFmpeg est nécessaire pour assembler les clips avec POV ennemie.")
+    playlist = target.with_suffix(".txt")
+    playlist.write_text("".join(f"file '{part.resolve().as_posix()}'\n" for part in parts), encoding="utf-8")
+    subprocess.run([ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-f", "concat", "-safe", "0",
+                    "-i", playlist, "-c", "copy", "-movflags", "+faststart", target], capture_output=True,
+                   timeout=300, creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+    playlist.unlink(missing_ok=True)
+    if not target.is_file() or not target.stat().st_size:
+        raise ValueError(f"FFmpeg n’a pas assemblé {target.name}.")
+    for part in parts:
+        part.unlink(missing_ok=True)
+    return target
+
+
+def clip_videos(render_folder, clips, *, completed_only=False):
+    """The finished video of each clip, {clip number: path}, its sequences joined when it has two."""
+    videos = sequence_videos(render_folder)
+    logger = current_job_log()
+    parts = {}
+    for sequence, (number, start, end) in enumerate(sequence_parts(clips), 1):
+        parts.setdefault(number, []).append(videos.get(f"sequence-{sequence}-tick-{start}-to-{end}.mp4"))
+    found = {}
+    for number, files in parts.items():
+        missing = [file for file in files if file is None or not file.is_file() or not file.stat().st_size
+                   or (completed_only and not completed_video(file))]
+        if missing:
+            if logger:
+                logger.warning("MP4 absent, vide ou illisible · clip %d", number)
+            continue
+        if len(files) == 1:
+            found[number] = files[0]
+            continue
+        try:
+            found[number] = join_videos(files, render_folder / f"clip-{number}.mp4")
+        except (OSError, ValueError, subprocess.SubprocessError):
+            if logger:
+                logger.warning("Assemblage impossible · clip %d", number, exc_info=True)
+    return found
+
+
 def capture_filename(map_number, number, clip):
     return f"m{map_number}-{number:04d}-{clip['kind']}.mp4"
 
 
 def publish_videos(render_folder, clips, out, map_number, *, completed_only=False):
-    videos = sequence_videos(render_folder)
     logger = current_job_log()
+    completed_only = completed_only or len(sequence_videos(render_folder)) < len(sequence_parts(clips))
+    found = clip_videos(render_folder, clips, completed_only=completed_only)
     if logger:
-        logger.info("Démo %d · MP4 détectés / clips attendus · %d/%d", map_number, len(videos), len(clips))
-    sources = []
-    for number, clip in enumerate(clips, 1):
-        name = f"sequence-{number}-tick-{clip['startTick']}-to-{clip['endTick']}.mp4"
-        source = videos.get(name)
-        if source is not None and source.is_file() and source.stat().st_size:
-            sources.append((number, clip, source))
-        elif logger:
-            logger.warning("MP4 absent ou vide · %s", name)
+        logger.info("Démo %d · MP4 détectés / clips attendus · %d/%d", map_number, len(found), len(clips))
+    sources = [(number, clip, found[number]) for number, clip in enumerate(clips, 1) if number in found]
     if not sources:
         return []
-    completed_only = completed_only or len(sources) < len(clips)
     clips_dir = out / "clips"
     clips_dir.mkdir(exist_ok=True)
     published = []
@@ -318,7 +380,8 @@ def publish_gallery(out, source, matches):
                       "GeistMonoVariable.woff2", "Geist-OFL.txt"):
         shutil.copyfile(ROOT / "gallery" / file_name, out / file_name)
     shutil.copytree(ROOT / "gallery" / "maps", out / "maps", dirs_exist_ok=True)
-    catalogue = {"title": source.name, "groupRadius": RADAR_GROUP_RADIUS,
+    # The source path lets a later compilation find the demo again to capture it in 1080p.
+    catalogue = {"title": source.name, "sourcePath": str(source), "groupRadius": RADAR_GROUP_RADIUS,
                  "groupBoxUnits": THROW_GROUP_SIZE_UNITS, "matches": matches}
     temporary = out / ".catalogue.js.tmp"
     try:
@@ -516,7 +579,9 @@ def record_video(installation, demo, config, before_capture, *, source=None):
         raise
     job_checkpoint()
     before_capture()
-    csdm(installation, "video", "--config-file", config)
+    # The crosshair settings of the capture are undone once CS2 has closed.
+    with standard_crosshair():
+        csdm(installation, "video", "--config-file", config)
 
 
 @contextmanager
@@ -752,8 +817,16 @@ def export_demos(args, source, installation, out, work, update, on_import, on_pr
                f"({', '.join(f'{name} {count}' for name, count in sorted(counts.items()))})"
                f", {estimates} fins estimées.")
         if enemy_pov:
-            with_pov = sum("pov" in clip for clip in clips)
-            update("Analyse", f"POV de la victime · {with_pov}/{len(clips)} clips.")
+            with_pov = sum(bool(clip_povs(clip)) for clip in clips)
+            update("Analyse", f"POV ennemie · {with_pov}/{len(clips)} clips.")
+        try:
+            add_held_keys(demo, clips, tick_rate)
+        except JobCancelled:
+            raise
+        except Exception:
+            # The compilation keys then light up at the release only.
+            if logger := current_job_log():
+                logger.warning("Touches tenues indisponibles pour %s", demo.name, exc_info=True)
         config, render_folder = create_video_job(demo, clips, tick_rate, work / f"map-{map_number}",
                                                  getattr(args, "capture_height", 720))
         cancelled = False
@@ -764,7 +837,8 @@ def export_demos(args, source, installation, out, work, update, on_import, on_pr
 
             def before_capture():
                 if on_progress is not None:
-                    queue("starting", capture=CaptureProgress(demo, render_folder, expected))
+                    queue("starting", capture=CaptureProgress(
+                        demo, render_folder, expected, [number for number, _, _ in sequence_parts(clips)]))
                 update("Capture", f"Démo {progress} · CS2 enregistre {expected} "
                        f"{'clip' if expected == 1 else 'clips'} sur {map_name}.")
 

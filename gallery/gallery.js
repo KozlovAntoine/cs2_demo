@@ -2063,6 +2063,8 @@ function showCompilationJob(state) {
     byId("compilation-start").dataset.busy = String(Boolean(state?.busy));
     byId("compilation-folder").hidden = !state?.file;
     byId("compilation-folder").dataset.file = state?.file ?? "";
+    renderMissingDemos(byId("compilation-missing"), state?.missingDemos,
+        window.parent?.utilityNavigation?.openImport ? () => window.parent.utilityNavigation.openImport("clips") : null);
     byId("compilation-status").textContent = state?.error ? state.error
         : state?.running ? state.phase || "Compilation en cours…"
         : state?.file ? `Terminé · ${state.file}`
@@ -2086,6 +2088,11 @@ compilationState = loadCompilationState();
 byId("compilation-open").hidden = !portrait;
 if (!portrait) compilationState.active = false;
 byId("compilation-history").hidden = !window.parent?.utilityNavigation?.openCompilations;
+byId("compilation-recapture").checked = compilationState.recapture !== false;
+byId("compilation-recapture").addEventListener("change", (event) => {
+    compilationState.recapture = event.target.checked;
+    saveCompilationState(compilationState);
+});
 byId("compilation-open").addEventListener("click", () => {
     compilationState.active = !compilationState.active;
     renderCompilation();
@@ -2104,7 +2111,8 @@ byId("compilation-prefill").addEventListener("click", () => {
     renderCompilation();
 });
 byId("compilation-start").addEventListener("click", async () => {
-    const payload = compilationRequest(libraryCompilationEntries(), byId("compilation-description").value);
+    const payload = compilationRequest(libraryCompilationEntries(), byId("compilation-description").value,
+        byId("compilation-recapture").checked);
     byId("compilation-start").dataset.busy = "true";
     byId("compilation-status").textContent = "Démarrage…";
     renderCompilation();

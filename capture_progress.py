@@ -44,10 +44,12 @@ class LogTail:
 
 
 class CaptureProgress:
-    def __init__(self, demo, render_folder, total):
+    def __init__(self, demo, render_folder, total, owners=None):
+        """total clips; owners gives the clip number of each sequence when a clip is recorded in several."""
         self.demo = log_path(demo)
         self.render_folder = log_path(render_folder) + "/"
-        self.total = total
+        self.owners = owners or list(range(1, total + 1))
+        self.total = len(self.owners)
         self.server_log = LogTail(SERVER_LOG, from_end=True)
         self.game_log = None
         self.game_matches = False
@@ -114,5 +116,10 @@ class CaptureProgress:
     def snapshot(self):
         self.read_server_log()
         self.read_game_log()
-        return {"state": self.state, "captured": len(self.captured) if self.capture_known else None,
-                "generated": len(self.generated)}
+        return {"state": self.state, "captured": self.clips(self.captured) if self.capture_known else None,
+                "generated": self.clips(self.generated)}
+
+    def clips(self, sequences):
+        """How many clips have all their sequences in the set."""
+        pending = {self.owners[number - 1] for number in range(1, self.total + 1) if number not in sequences}
+        return len(set(self.owners) - pending)

@@ -21,10 +21,11 @@ function loadCompilationState() {
             return {
                 active: saved.active, ids: saved.ids.filter((id) => typeof id === "string"),
                 description: edited ? saved.description : "", descriptionEdited: edited,
+                recapture: saved.recapture !== false,
             };
         }
     } catch { }
-    return { active: false, ids: [], description: "", descriptionEdited: false };
+    return { active: false, ids: [], description: "", descriptionEdited: false, recapture: true };
 }
 
 function saveCompilationState(state) {
@@ -100,13 +101,50 @@ function compilationText(state, entries) {
     return state.description;
 }
 
-function compilationRequest(entries, description) {
+function compilationRequest(entries, description, recapture = true) {
     return {
+        recapture,
         clips: entries.map(({ clip, match }) => ({
             exportId: clip.exportId, file: clip.file, title: compilationCallout(clip, match),
         })),
         description: description.trim(),
     };
+}
+
+// Matches whose demo is gone: what to look for on HLTV before importing them again.
+function renderMissingDemos(container, missing, onImport) {
+    container.replaceChildren();
+    container.hidden = !missing?.length;
+    if (!missing?.length) return;
+    const title = document.createElement("p");
+    title.className = "missing-demos-title";
+    title.textContent = "Démo introuvable · réimporte ces matchs :";
+    const list = document.createElement("ul");
+    for (const item of missing) {
+        const row = document.createElement("li");
+        const name = document.createElement("strong");
+        name.textContent = item.label;
+        const details = document.createElement("small");
+        const date = item.date ? new Date(item.date).toLocaleDateString("fr-FR", { day: "numeric", month: "short", year: "numeric" }) : "";
+        details.textContent = [item.event, item.score ? `Score ${item.score}` : "", date,
+            `${item.clips} ${item.clips === 1 ? "clip" : "clips"}`, item.archive].filter(Boolean).join(" · ");
+        const link = document.createElement("a");
+        link.href = item.hltv;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.textContent = "Chercher sur HLTV ↗";
+        row.append(name, details, link);
+        list.append(row);
+    }
+    container.append(title, list);
+    if (onImport) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "zone-button";
+        button.textContent = "Importer une démo";
+        button.addEventListener("click", onImport);
+        container.append(button);
+    }
 }
 
 async function copyCompilationText(text, field) {

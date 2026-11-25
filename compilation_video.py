@@ -4,32 +4,30 @@ import shutil
 import subprocess
 import tempfile
 from datetime import datetime
-from html import escape
 from pathlib import Path
 
+from enemy_pov import clip_povs
+from compilation_titles import FRAME_HEIGHT, FRAME_TOP, HEIGHT, WIDTH, titles
 from job_control import job_checkpoint
 from utility_video import run
 
 
-WIDTH, HEIGHT = 1080, 1920
-FRAME_HEIGHT = WIDTH * 9 // 16
-FRAME_TOP = (HEIGHT - FRAME_HEIGHT) // 2
-FRAME_BOTTOM = FRAME_TOP + FRAME_HEIGHT
 FPS = 60
+# CS2 demos record 64 ticks a second; clip videos start on the clip's startTick.
+TICK_RATE = 64
 FADE_SECONDS = 0.25
 MAX_CLIPS = 30
 # Instagram's caption limit, the shortest of the three platforms.
 DESCRIPTION_MAX = 2200
 META_VERSION = 1
 COMPILATION_FOLDER = "compilations"
-ACCENT = "#ffad66"
 KIND_LABELS = {"smoke": "SMOKE", "flash": "FLASH", "he": "HE", "molo": "MOLOTOV"}
 KIND_COLORS = {"smoke": "#8dd3f3", "flash": "#f7df88", "molo": "#fa9c77", "he": "#ed91af"}
 SIDE_COLORS = {"t": "#f29423", "ct": "#378ef0"}
-MOUSE_LABELS = {"left": "LEFT CLICK", "right": "RIGHT CLICK", "middle": "LEFT + RIGHT CLICK"}
-FONT = "Segoe UI"
-# Average advance of Segoe UI Bold capitals, in em. It only sizes the key boxes around centred text.
-CAPITAL_ADVANCE = 0.64
+NEUTRAL_COLOR = "#9aa3ae"
+# Each key with the buttons of throw_inputs.HELD_BUTTONS that must all be held for it to light up.
+MOUSE_KEYS = {"left": ("LEFT CLICK", ("attack",)), "right": ("RIGHT CLICK", ("attack2",)),
+              "middle": ("LEFT + RIGHT CLICK", ("attack", "attack2"))}
 
 
 def ffmpeg_tools():
@@ -57,137 +55,87 @@ def map_label(name):
     return re.sub(r"^(de|cs|ar)_", "", name).replace("_", " ").upper()
 
 
+def overlap(first, second):
+    """The moments covered by both lists of [from, to] spans."""
+    spans, i, j = [], 0, 0
+    while i < len(first) and j < len(second):
+        start, end = max(first[i][0], second[j][0]), min(first[i][1], second[j][1])
+        if start < end:
+            spans.append([start, end])
+        if first[i][1] < second[j][1]:
+            i += 1
+        else:
+            j += 1
+    return spans
+
+
 def controls_keys(clip):
-    controls = (clip.get("lineup") or {}).get("controls") or {}
-    keys = [key for key in controls.get("directions", ()) if key in ("W", "Q", "S", "D")]
-    if controls.get("walk"):
-        keys.append("WALK")
-    if controls.get("crouch"):
-        keys.append("CROUCH")
-    if controls.get("jump"):
-        keys.append("JUMP")
-    if mouse := MOUSE_LABELS.get(controls.get("mouse")):
+    """The throw's keys, each with the spans in seconds where the thrower holds it, or None for older clips."""
+    lineup = clip.get("lineup") or {}
+    controls = lineup.get("controls") or {}
+    keys = [(key, (key,)) for key in controls.get("directions", ()) if key in ("W", "Q", "S", "D")]
+    for flag, label in (("walk", "WALK"), ("crouch", "CROUCH"), ("jump", "JUMP")):
+        if controls.get(flag):
+            keys.append((label, (flag,)))
+    if mouse := MOUSE_KEYS.get(controls.get("mouse")):
         keys.append(mouse)
-    return keys
+    held = lineup.get("held")
+    result = []
+    for label, buttons in keys:
+        spans = None
+        if isinstance(held, dict):
+            spans = held.get(buttons[0]) or []
+            for button in buttons[1:]:
+                spans = overlap(spans, held.get(button) or [])
+        result.append({"label": label, "held": spans})
+    return result
 
 
-def fitted_size(text, size, width):
-    return max(28, min(size, int(width / max(1, len(text) * CAPITAL_ADVANCE))))
+def title_card(item, index, total, duration):
+    """What one clip's titles say, and when the throw, the detonation and the camera switch happen in its video."""
+    clip = item["clip"]
+    kind, side = clip["kind"], clip.get("side", "")
 
+    def moment(key):
+        tick, start = clip.get(key), clip.get("startTick")
+        if not all(isinstance(value, (int, float)) for value in (tick, start)):
+            return None
+        seconds = (tick - start) / TICK_RATE
+        return seconds if 0 <= seconds < duration else None
 
-def text(x, y, value, size, color="#ffffff", weight=700, anchor="middle", spacing=0, opacity=1):
-    return (f'<text x="{x}" y="{y}" font-family="{FONT}" font-weight="{weight}" font-size="{size}" fill="{color}" '
-            f'text-anchor="{anchor}" letter-spacing="{spacing}" opacity="{opacity}">{escape(value)}</text>')
-
-
-def keycaps(keys, y, size=40):
-    """A centred row of key boxes, wrapped on two lines when it is too wide."""
-    padding, gap, height = 30, 18, size + 40
-    widths = [round(len(key) * size * CAPITAL_ADVANCE) + 2 * padding for key in keys]
-    rows, row, row_width = [], [], 0
-    for key, width in zip(keys, widths):
-        if row and row_width + gap + width > WIDTH - 120:
-            rows.append(row)
-            row, row_width = [], 0
-        row.append((key, width))
-        row_width += width + (gap if len(row) > 1 else 0)
-    if row:
-        rows.append(row)
-    parts = []
-    for index, row in enumerate(rows):
-        total = sum(width for _, width in row) + gap * (len(row) - 1)
-        x = (WIDTH - total) / 2
-        top = y + index * (height + 16)
-        for key, width in row:
-            parts.append(f'<rect x="{x:.1f}" y="{top}" width="{width}" height="{height}" rx="18" fill="#10161c" '
-                         f'fill-opacity="0.92" stroke="{ACCENT}" stroke-width="4"/>')
-            parts.append(text(round(x + width / 2, 1), top + height / 2 + size * 0.36, key, size))
-            x += width + gap
-    return "".join(parts)
-
-
-def overlay_svg(item, index, total):
-    clip, title = item["clip"], item["title"]
-    kind = clip["kind"]
-    side = clip.get("side", "")
-    parts = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{WIDTH}" height="{HEIGHT}">',
-             # A dark veil keeps the text readable when a flash whitens the blurred background.
-             f'<rect width="{WIDTH}" height="{FRAME_TOP}" fill="#0c1013" fill-opacity="0.55"/>',
-             f'<rect y="{FRAME_BOTTOM}" width="{WIDTH}" height="{HEIGHT - FRAME_BOTTOM}" fill="#0c1013" '
-             f'fill-opacity="0.55"/>']
-    # Top band: map and utility, then the callout.
-    parts.append(f'<rect x="440" y="300" width="200" height="6" rx="3" fill="{KIND_COLORS[kind]}"/>')
-    parts.append(text(WIDTH / 2, 380, f"{map_label(item['map'])} · {KIND_LABELS[kind]}", 40, KIND_COLORS[kind],
-                      spacing=6))
-    headline = title.upper()
-    parts.append(text(WIDTH / 2, 520, headline, fitted_size(headline, 104, WIDTH - 120)))
-    if total > 1:
-        parts.append(text(WIDTH - 60, 120, f"{index}/{total}", 40, "#ffffff", 600, "end", opacity=0.75))
-    # Bottom band: the throw inputs. The thrower and the enemy POV take turns above them.
-    keys = controls_keys(clip)
-    if keys:
-        parts.append(text(WIDTH / 2, FRAME_BOTTOM + 268, "HOW TO THROW", 28, "#9aa3ae", 600, spacing=8))
-        parts.append(keycaps(keys, FRAME_BOTTOM + 296))
-    parts.append("</svg>")
-    return "".join(parts)
-
-
-def layer(content):
-    return f'<svg xmlns="http://www.w3.org/2000/svg" width="{WIDTH}" height="{HEIGHT}">{content}</svg>'
-
-
-def thrower_svg(clip):
-    side = clip.get("side", "")
-    player = clip.get("player", "")
-    parts = [text(WIDTH / 2, FRAME_BOTTOM + 120, player, fitted_size(player, 72, WIDTH - 160))]
-    team = " · ".join(part for part in (clip.get("team", "").upper(), side.upper()) if part)
-    if team:
-        parts.append(text(WIDTH / 2, FRAME_BOTTOM + 180, team, 34, SIDE_COLORS.get(side, "#9aa3ae"), 600, spacing=4))
-    return layer("".join(parts))
-
-
-def pov_svg(clip):
-    """The enemy POV badge, drawn where the thrower name was."""
-    pov = clip["pov"]
-    label = f"ENEMY POV · {pov['player']}"
-    size = fitted_size(label, 46, WIDTH - 220)
-    width = min(WIDTH - 120, round(len(label) * size * 0.6) + 96)
-    x = (WIDTH - width) / 2
-    y = FRAME_BOTTOM + 52
-    parts = [f'<rect x="{x:.1f}" y="{y}" width="{width}" height="92" rx="46" fill="#b3261e" fill-opacity="0.92"/>',
-             text(WIDTH / 2, y + 46 + size * 0.36, label, size)]
-    effect = {"blind": f"BLINDED {pov.get('value', 0):.1f}S", "damage": f"-{pov.get('value', 0)} HP"}.get(pov.get("effect"))
-    if effect:
-        parts.append(text(WIDTH / 2, FRAME_BOTTOM + 194, effect, 34, "#ff8a7a", 700, spacing=4))
-    return layer("".join(parts))
-
-
-def render_image(ffmpeg, svg, target):
-    source = target.with_suffix(".svg")
-    source.write_text(svg, encoding="utf-8")
-    run([ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-i", source, target],
-        capture_output=True, encoding="utf-8")
-    if not target.is_file():
-        raise ValueError("FFmpeg n’a pas pu dessiner le bandeau.")
+    card = {
+        "duration": duration, "color": KIND_COLORS[kind], "band": f"{map_label(item['map'])} · {KIND_LABELS[kind]}",
+        "title": item["title"].upper(), "counter": f"{index:02d}/{total:02d}" if total > 1 else None,
+        "player": clip.get("player", ""),
+        "team": " · ".join(part for part in ((clip.get("team") or "").upper(), side.upper()) if part),
+        "team_color": SIDE_COLORS.get(side, NEUTRAL_COLOR), "keys": controls_keys(clip),
+        "launch": moment("launchTick"), "pop": moment("activationTick"), "povs": [],
+    }
+    for pov in clip_povs(clip):
+        if not isinstance(pov.get("offset"), (int, float)) or not 0 < pov["offset"] < duration:
+            continue
+        value = pov.get("value") or 0
+        effect = {"blind": f"BLINDED {value:.1f}S", "damage": f"-{value} HP", "inside": "IN THE SMOKE"}.get(
+            pov.get("effect"))
+        if pov.get("killed"):
+            effect = f"{effect} · KILLED" if effect else "KILLED"
+        card["povs"].append({"at": pov["offset"], "label": f"ENEMY POV · {pov.get('player', '')}".upper(),
+                             "effect": effect})
+    card["povs"].sort(key=lambda pov: pov["at"])
+    # Each badge stays until the next camera switch.
+    for current, following in zip(card["povs"], card["povs"][1:] + [None]):
+        current["until"] = following["at"] if following else None
+    card["pov"] = card["povs"][0] if card["povs"] else None
+    return card
 
 
 def render_segment(ffmpeg, ffprobe, item, index, total, work):
-    clip_file = item["file"]
+    clip_file = Path(item["file"]).resolve()
     duration, audio = probe(ffprobe, clip_file)
-    overlay = work / f"overlay-{index}.png"
-    render_image(ffmpeg, overlay_svg(item, index, total), overlay)
-    thrower = work / f"thrower-{index}.png"
-    render_image(ffmpeg, thrower_svg(item["clip"]), thrower)
-    inputs = ["-i", clip_file, "-loop", "1", "-i", overlay, "-loop", "1", "-i", thrower]
-    pov_start = None
-    if pov := item["clip"].get("pov"):
-        pov_start = pov.get("offset")
-        if isinstance(pov_start, (int, float)) and 0 < pov_start < duration:
-            badge = work / f"pov-{index}.png"
-            render_image(ffmpeg, pov_svg(item["clip"]), badge)
-            inputs += ["-loop", "1", "-i", badge]
-        else:
-            pov_start = None
+    # Named relative to the work folder: a drive colon would need escaping inside the filter graph.
+    script = f"titles-{index:02d}.ass"
+    (work / script).write_text(titles(title_card(item, index, total, duration), FPS), encoding="utf-8")
+    inputs = ["-i", clip_file]
     if not audio:
         inputs += ["-f", "lavfi", "-t", f"{duration:.3f}", "-i", "anullsrc=r=48000:cl=stereo"]
     fade_out = max(0, duration - FADE_SECONDS)
@@ -197,27 +145,16 @@ def render_segment(ffmpeg, ffprobe, item, index, total, work):
         f"[bg]scale=270:480:force_original_aspect_ratio=increase,crop=270:480,gblur=sigma=12,"
         f"eq=brightness=-0.22:saturation=0.75,scale={WIDTH}:{HEIGHT}[back]",
         f"[fg]scale={WIDTH}:{FRAME_HEIGHT}:flags=lanczos,setsar=1[front]",
-        f"[back][front]overlay=0:{FRAME_TOP}[base]",
-        "[base][1:v]overlay=0:0:shortest=1[branded]",
+        f"[back][front]overlay=0:{FRAME_TOP},ass={script},fade=t=in:st=0:d={FADE_SECONDS},"
+        f"fade=t=out:st={fade_out:.3f}:d={FADE_SECONDS},format=yuv420p[v]",
+        f"[{'0' if audio else '1'}:a]aresample=48000,aformat=channel_layouts=stereo,"
+        f"afade=t=in:st=0:d={FADE_SECONDS},afade=t=out:st={fade_out:.3f}:d={FADE_SECONDS}[a]",
     ]
-    if pov_start is None:
-        graph.append("[branded][2:v]overlay=0:0:shortest=1[named]")
-        last = "named"
-    else:
-        # The thrower name gives way to the enemy POV badge when the camera switches.
-        graph.append(f"[branded][2:v]overlay=0:0:shortest=1:enable='lt(t,{pov_start:.3f})'[named]")
-        graph.append(f"[named][3:v]overlay=0:0:shortest=1:enable='gte(t,{pov_start:.3f})'[pov]")
-        last = "pov"
-    graph.append(f"[{last}]fade=t=in:st=0:d={FADE_SECONDS},fade=t=out:st={fade_out:.3f}:d={FADE_SECONDS},"
-                 f"format=yuv420p[v]")
-    audio_input = "0:a" if audio else f"{len([part for part in inputs if part == '-i']) - 1}:a"
-    graph.append(f"[{audio_input}]aresample=48000,aformat=channel_layouts=stereo,"
-                 f"afade=t=in:st=0:d={FADE_SECONDS},afade=t=out:st={fade_out:.3f}:d={FADE_SECONDS}[a]")
     segment = work / f"segment-{index:02d}.mp4"
     run([ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-y", *inputs,
          "-filter_complex", ";".join(graph), "-map", "[v]", "-map", "[a]", "-t", f"{duration:.3f}",
          "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-r", str(FPS), "-c:a", "aac", "-b:a", "192k",
-         "-movflags", "+faststart", segment], capture_output=True, encoding="utf-8")
+         "-movflags", "+faststart", segment.name], capture_output=True, encoding="utf-8", cwd=work)
     if not segment.is_file() or not segment.stat().st_size:
         raise ValueError(f"FFmpeg n’a pas livré le segment {index}.")
     return segment
@@ -286,7 +223,7 @@ def generate_compilation(output, items, report, description=""):
         "duration": duration, "clipCount": len(items), "description": description.strip(), "links": {},
         "clips": [{**item.get("reference", {}), "title": item["title"], "map": item["map"],
                    "kind": item["clip"].get("kind"), "player": item["clip"].get("player"),
-                   "team": item["clip"].get("team"), "pov": bool(item["clip"].get("pov"))} for item in items],
+                   "team": item["clip"].get("team"), "povs": len(clip_povs(item["clip"]))} for item in items],
     })
     report("Compilation terminée", target.name)
     return target
