@@ -27,7 +27,12 @@ from clip_library import (
     playable_matches, published_catalogues, read_catalogue, set_clip_state,
 )
 from clip_thumbnails import THUMBNAIL_FOLDER, THUMBNAIL_NAME, create_thumbnail
-from compilation_video import COMPILATION_FOLDER, MAX_CLIPS, generate_compilation
+from compilation_library import (
+    compilation_thumbnail, compilation_video, delete_compilation, list_compilations, post_text, record_upload,
+    update_compilation,
+)
+import youtube_publish
+from compilation_video import COMPILATION_FOLDER, DESCRIPTION_MAX, MAX_CLIPS, generate_compilation
 from portrait_video import existing_portrait, generate_portrait, portrait_folder
 from replay_library import delete_replay, list_replays, load_replay, replay_name, saved_demo, storage_usage
 from round_replay import FIRST_HALF_ROUNDS, player_heatmap, replay_index
@@ -40,12 +45,13 @@ from utility_video import (
 
 APP_ID = "cs2-utility-videos"
 STATIC = {"/": "index.html", "/app.css": "app.css", "/app.js": "app.js", "/utility.ico": "utility.ico"}
-GALLERY_ASSETS = {"index.html", "gallery.css", "gallery.js", "callouts.js", "GeistVariable.woff2",
+GALLERY_ASSETS = {"index.html", "gallery.css", "gallery.js", "callouts.js", "compilation.js", "GeistVariable.woff2",
                   "GeistMonoVariable.woff2", "Geist-OFL.txt"}
 GALLERY_FILES = GALLERY_ASSETS | {"catalogue.js"}
 MAP_EMBLEM = re.compile(r"(de|cs|ar)_[a-z0-9_]+\.png")
 PLAYER_ASSETS = {"index.html", "players.css", "players.js"}
 REPLAY_ASSETS = {"index.html", "replay.css", "replay.js"}
+COMPILATION_ASSETS = {"index.html", "compilations.css", "compilations.js"}
 CONTENT_POLICY = ("default-src 'self'; style-src 'self' 'unsafe-inline'; frame-ancestors 'self'; "
                   "object-src 'none'; base-uri 'none'; form-action 'self'")
 QUEUE_FINISHED = {"complete", "partial", "skipped", "cancelled", "error"}
@@ -437,20 +443,55 @@ class App:
                 clip_file, map_name, clip = find_library_clip(self.output, entry.get("exportId"), entry.get("file"))
                 title = entry.get("title")
                 title = title.strip()[:40] if isinstance(title, str) and title.strip() else "Lineup"
-                items.append({"file": clip_file, "clip": clip, "map": map_name, "title": title})
+                items.append({"file": clip_file, "clip": clip, "map": map_name, "title": title,
+                              "reference": {"exportId": entry.get("exportId"), "file": entry.get("file")}})
+            description = data.get("description")
+            description = description.strip()[:DESCRIPTION_MAX] if isinstance(description, str) else ""
 
             def render_compilation(report):
-                target = generate_compilation(self.output, items, report)
+                target = generate_compilation(self.output, items, report, description)
                 return {"file": target.name}
 
             return self.start_job(render_compilation, log_kind="compilation", controllable=True,
                                   description=f"Compilation 9:16 · {len(items)} clips", compilation=True)
 
-    def open_compilations(self):
+    def open_compilations(self, name=None):
         folder = self.output / COMPILATION_FOLDER
         if not folder.is_dir():
             raise ValueError("Aucune compilation dans la vidéothèque.")
+        if name:
+            # Explorer opens the folder with this video selected.
+            video = compilation_video(self.output, name)
+            subprocess.Popen(["explorer", f"/select,{video}"], creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            return
         os.startfile(folder, "explore")
+
+    def youtube_status(self):
+        with self.lock:
+            mine = bool(self.job.get("youtube"))
+            upload = {"file": self.job.get("youtube"), "running": self.job["state"] == "running",
+                      "phase": (self.job.get("messages") or [""])[-1], "error": self.job.get("error"),
+                      "url": (self.job.get("upload") or {}).get("url")} if mine else None
+            busy = self.busy()
+        return {**youtube_publish.status(), "busy": busy, "upload": upload}
+
+    def start_youtube_upload(self, data):
+        privacy = data.get("privacy", "private")
+        with self.lock:
+            if self.busy():
+                raise ValueError("Un export ou une compilation est déjà en cours.")
+            if not youtube_publish.status()["connected"]:
+                raise ValueError("Connecte d’abord ta chaîne YouTube.")
+            video, title, description = post_text(self.output, data.get("file"))
+            name = video.name
+
+            def upload(report):
+                result = youtube_publish.upload_video(video, title, description, privacy, report)
+                with self.lock:
+                    record_upload(self.output, name, "youtube", result)
+                return {"upload": result}
+
+            return self.start_job(upload, log_kind="youtube", description=f"YouTube · {name} · {privacy}", youtube=name)
 
     def open_portrait(self, reference):
         with self.lock:
@@ -669,6 +710,24 @@ class Handler(BaseHTTPRequestHandler):
                 self.json_response({"error": error_message(error)}, HTTPStatus.BAD_REQUEST)
         elif path == "/api/compilation":
             self.json_response(app.compilation_status())
+        elif path == "/api/youtube/status":
+            self.json_response(app.youtube_status())
+        elif path == "/api/compilations":
+            with app.lock:
+                compilations = list_compilations(app.output)
+            self.json_response({"compilations": compilations, "job": app.compilation_status()})
+        elif path.startswith("/compilations/media/"):
+            name = path.removeprefix("/compilations/media/")
+            try:
+                with app.lock:
+                    if name.endswith(".jpg"):
+                        file = compilation_thumbnail(app.output, name.removesuffix(".jpg"))
+                    else:
+                        file = compilation_video(app.output, name)
+            except (ValueError, OSError, subprocess.SubprocessError):
+                self.send_error(HTTPStatus.NOT_FOUND)
+            else:
+                self.send_file(file)
         elif path == "/api/portrait":
             data = {key: values[0] for key, values in parse_qs(url.query).items()}
             try:
@@ -720,6 +779,8 @@ class Handler(BaseHTTPRequestHandler):
                 file = ROOT / "players" / path.removeprefix("/players/")
             elif path.startswith("/replay/") and path.removeprefix("/replay/") in REPLAY_ASSETS:
                 file = ROOT / "replay" / path.removeprefix("/replay/")
+            elif path.startswith("/compilations/") and path.removeprefix("/compilations/") in COMPILATION_ASSETS:
+                file = ROOT / "compilations" / path.removeprefix("/compilations/")
             elif path.startswith("/callout-radars/"):
                 filename = path.removeprefix("/callout-radars/")
                 name = filename.removesuffix(".png").removesuffix("_lower")
@@ -782,8 +843,20 @@ class Handler(BaseHTTPRequestHandler):
                 self.json_response({"job": app.reanalyze_replay(data)}, HTTPStatus.ACCEPTED)
             elif self.path == "/api/compilation":
                 self.json_response({"job": app.start_compilation(data)}, HTTPStatus.ACCEPTED)
+            elif self.path == "/api/youtube/connect":
+                self.json_response({"url": youtube_publish.start_connection()})
+            elif self.path == "/api/youtube/disconnect":
+                self.json_response(youtube_publish.disconnect())
+            elif self.path == "/api/youtube/upload":
+                self.json_response({"job": app.start_youtube_upload(data)}, HTTPStatus.ACCEPTED)
+            elif self.path == "/api/compilations/update":
+                with app.lock:
+                    self.json_response({"compilation": update_compilation(app.output, data)})
+            elif self.path == "/api/compilations/delete":
+                with app.lock:
+                    self.json_response(delete_compilation(app.output, data.get("file")))
             elif self.path == "/api/open-compilations":
-                app.open_compilations()
+                app.open_compilations(data.get("file"))
                 self.json_response({"opened": True})
             elif self.path == "/api/delete-clip":
                 app.remove(clip_reference(data))

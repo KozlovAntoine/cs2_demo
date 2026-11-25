@@ -1933,38 +1933,13 @@ deleteDialog.addEventListener("close", async () => {
 
 /* ---------- Compilation 9:16 ---------- */
 
-const COMPILATION_STORAGE_KEY = "utilityCompilation";
-const COMPILATION_MAX_CLIPS = 30;
+// The selection and the post text are shared with the Compilations page through compilation.js.
 // `var` keeps these readable from selectClip and renderClipPage before this part of the script has run.
 var compilationState;
 var compilationTimer;
 
-function loadCompilationState() {
-    try {
-        const saved = JSON.parse(localStorage.getItem(COMPILATION_STORAGE_KEY));
-        if (saved && typeof saved.active === "boolean" && Array.isArray(saved.ids)) {
-            return { active: saved.active, ids: saved.ids.filter((id) => typeof id === "string") };
-        }
-    } catch { }
-    return { active: false, ids: [] };
-}
-
-function saveCompilationState() {
-    try {
-        localStorage.setItem(COMPILATION_STORAGE_KEY, JSON.stringify(compilationState));
-    } catch { }
-}
-
-function findLibraryClip(id) {
-    for (const match of catalogue.matches) {
-        const clip = match.clips.find((item) => clipId(item) === id);
-        if (clip) return { clip, match };
-    }
-    return undefined;
-}
-
-function compilationEntries() {
-    return compilationState ? compilationState.ids.map(findLibraryClip).filter(Boolean) : [];
+function libraryCompilationEntries() {
+    return compilationEntries(catalogue, compilationState);
 }
 
 function compilationIndex(clip) {
@@ -1972,9 +1947,12 @@ function compilationIndex(clip) {
     return compilationState?.active && id ? compilationState.ids.indexOf(id) : -1;
 }
 
-function compilationCallout(clip, match) {
-    const name = calloutName(clip, match);
-    return name === "À définir" ? "" : name;
+function renderCompilationDescription(entries) {
+    const field = byId("compilation-description");
+    const text = compilationText(compilationState, entries);
+    if (field.value !== text) field.value = text;
+    byId("compilation-description-length").textContent = `${field.value.length} / ${COMPILATION_DESCRIPTION_MAX} caractères`;
+    byId("compilation-description-reset").disabled = !compilationState.descriptionEdited;
 }
 
 function syncCompilationClip() {
@@ -2022,10 +2000,11 @@ function openCompilationClip({ clip, match }) {
 function renderCompilation() {
     if (!compilationState) return;
     const { active } = compilationState;
-    const entries = compilationEntries();
+    const entries = libraryCompilationEntries();
     // Clips deleted from the library leave the selection.
     compilationState.ids = entries.map(({ clip }) => clipId(clip));
-    saveCompilationState();
+    renderCompilationDescription(entries);
+    saveCompilationState(compilationState);
     byId("compilation-open").setAttribute("aria-pressed", String(active));
     byId("compilation-panel").hidden = !active;
     byId("compilation-count").textContent = `${entries.length} ${entries.length === 1 ? "clip" : "clips"}`;
@@ -2105,6 +2084,7 @@ async function refreshCompilationJob() {
 compilationState = loadCompilationState();
 byId("compilation-open").hidden = !portrait;
 if (!portrait) compilationState.active = false;
+byId("compilation-history").hidden = !window.parent?.utilityNavigation?.openCompilations;
 byId("compilation-open").addEventListener("click", () => {
     compilationState.active = !compilationState.active;
     renderCompilation();
@@ -2123,14 +2103,12 @@ byId("compilation-prefill").addEventListener("click", () => {
     renderCompilation();
 });
 byId("compilation-start").addEventListener("click", async () => {
-    const clips = compilationEntries().map(({ clip, match }) => ({
-        ...clipReference(clip), title: compilationCallout(clip, match),
-    }));
+    const payload = compilationRequest(libraryCompilationEntries(), byId("compilation-description").value);
     byId("compilation-start").dataset.busy = "true";
     byId("compilation-status").textContent = "Démarrage…";
     renderCompilation();
     try {
-        await request("/api/compilation", { clips });
+        await request("/api/compilation", payload);
     } catch (error) {
         byId("compilation-start").dataset.busy = "false";
         byId("compilation-status").textContent = error.message;
@@ -2139,6 +2117,22 @@ byId("compilation-start").addEventListener("click", async () => {
     }
     refreshCompilationJob();
 });
+byId("compilation-description").addEventListener("input", (event) => {
+    compilationState.description = event.target.value;
+    compilationState.descriptionEdited = true;
+    renderCompilationDescription(libraryCompilationEntries());
+    saveCompilationState(compilationState);
+});
+byId("compilation-description-reset").addEventListener("click", () => {
+    compilationState.descriptionEdited = false;
+    renderCompilation();
+});
+byId("compilation-description-copy").addEventListener("click", async (event) => {
+    const field = byId("compilation-description");
+    if (!await copyCompilationText(field.value, field)) return;
+    event.target.textContent = "Copié";
+    setTimeout(() => { event.target.textContent = "Copier"; }, 1500);
+});
 byId("compilation-folder").addEventListener("click", async () => {
     try {
         await request("/api/open-compilations", {});
@@ -2146,5 +2140,6 @@ byId("compilation-folder").addEventListener("click", async () => {
         byId("compilation-status").textContent = error.message;
     }
 });
+byId("compilation-history").addEventListener("click", () => window.parent.utilityNavigation.openCompilations());
 renderCompilation();
 if (compilationState.active) refreshCompilationJob();

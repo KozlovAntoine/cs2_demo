@@ -449,3 +449,9 @@ dialog p { margin-top: 7px; color: var(--muted); overflow-wrap: anywhere; }
   .callout-workspace { grid-template-columns: minmax(0, 1fr); }
   .callout-radar { width: min(100%, 62dvh); }
 }
+.compilation-caption { display: grid; gap: 6px; margin-top: 12px; }
+.compilation-caption-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: .86rem; font-weight: 600; }
+.compilation-caption-heading span { display: flex; gap: 6px; }
+.compilation-caption-heading .zone-button { padding: 4px 8px; font-size: .8rem; }
+.compilation-caption textarea { width: 100%; min-height: 150px; resize: vertical; box-sizing: border-box; border: 1px solid var(--edge); border-radius: 6px; background: #202831; color: inherit; font: inherit; font-size: .82rem; line-height: 1.45; padding: 8px 10px; }
+.compilation-caption-hint { margin: 0; color: var(--muted); font-size: .75rem; }

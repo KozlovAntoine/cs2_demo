@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <rect width="1024" height="1024" fill="#0f0f11"/>
+  <rect x="96" y="96" width="832" height="832" rx="180" fill="#16161a" stroke="#ff8a3d" stroke-width="24"/>
+  <path transform="translate(0,-60)" d="M512 250c-26 74-110 120-110 214a110 110 0 0 0 220 0c0-38-14-66-34-90-4 38-22 60-46 66 14-62-6-130-30-190Z" fill="#ff8a3d"/>
+  <text x="512" y="720" font-family="Segoe UI" font-weight="800" font-size="210" fill="#ececef" text-anchor="middle" letter-spacing="6">CS2</text>
+  <text x="512" y="812" font-family="Segoe UI" font-weight="700" font-size="64" fill="#ff8a3d" text-anchor="middle" letter-spacing="18">UTILITIES</text>
+</svg>

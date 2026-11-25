@@ -18,6 +18,9 @@ FRAME_BOTTOM = FRAME_TOP + FRAME_HEIGHT
 FPS = 60
 FADE_SECONDS = 0.25
 MAX_CLIPS = 30
+# Instagram's caption limit, the shortest of the three platforms.
+DESCRIPTION_MAX = 2200
+META_VERSION = 1
 COMPILATION_FOLDER = "compilations"
 ACCENT = "#ffad66"
 KIND_LABELS = {"smoke": "SMOKE", "flash": "FLASH", "he": "HE", "molo": "MOLOTOV"}
@@ -220,6 +223,14 @@ def render_segment(ffmpeg, ffprobe, item, index, total, work):
     return segment
 
 
+def write_meta(video, meta):
+    """The compilation's history entry, next to the video: clips, post text, platform links."""
+    target = video.with_suffix(".json")
+    temporary = target.with_name(f".{target.name}.tmp")
+    temporary.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporary.replace(target)
+
+
 def compilation_name(items):
     maps = sorted({map_label(item["map"]).title() for item in items})
     kinds = sorted({KIND_LABELS[item["clip"]["kind"]].title() for item in items})
@@ -229,7 +240,7 @@ def compilation_name(items):
     return f"Compilation {label} {len(items)} clips {datetime.now().strftime('%Y-%m-%d %H-%M')}.mp4"
 
 
-def generate_compilation(output, items, report):
+def generate_compilation(output, items, report, description=""):
     if not 1 <= len(items) <= MAX_CLIPS:
         raise ValueError(f"Choisis entre 1 et {MAX_CLIPS} clips.")
     ffmpeg, ffprobe = ffmpeg_tools()
@@ -253,5 +264,19 @@ def generate_compilation(output, items, report):
             raise ValueError("FFmpeg n’a pas assemblé la compilation.")
         target = folder / compilation_name(items)
         shutil.move(result, target)
+    if description:
+        # Same name as the video, ready to paste on TikTok, Instagram or YouTube.
+        target.with_suffix(".txt").write_text(description.strip() + "\n", encoding="utf-8")
+    try:
+        duration = round(probe(ffprobe, target)[0], 2)
+    except (ValueError, OSError, subprocess.SubprocessError, json.JSONDecodeError):
+        duration = None
+    write_meta(target, {
+        "version": META_VERSION, "createdAt": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "duration": duration, "clipCount": len(items), "description": description.strip(), "links": {},
+        "clips": [{**item.get("reference", {}), "title": item["title"], "map": item["map"],
+                   "kind": item["clip"].get("kind"), "player": item["clip"].get("player"),
+                   "team": item["clip"].get("team"), "pov": bool(item["clip"].get("pov"))} for item in items],
+    })
     report("Compilation terminée", target.name)
     return target

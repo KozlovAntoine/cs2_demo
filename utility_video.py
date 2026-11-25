@@ -314,7 +314,7 @@ def publish_videos(render_folder, clips, out, map_number, *, completed_only=Fals
 
 
 def publish_gallery(out, source, matches):
-    for file_name in ("index.html", "gallery.css", "gallery.js", "callouts.js", "GeistVariable.woff2",
+    for file_name in ("index.html", "gallery.css", "gallery.js", "callouts.js", "compilation.js", "GeistVariable.woff2",
                       "GeistMonoVariable.woff2", "Geist-OFL.txt"):
         shutil.copyfile(ROOT / "gallery" / file_name, out / file_name)
     shutil.copytree(ROOT / "gallery" / "maps", out / "maps", dirs_exist_ok=True)

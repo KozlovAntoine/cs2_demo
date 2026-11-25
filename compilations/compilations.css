@@ -1,0 +1,90 @@
+.comp-page { max-width: 1520px; }
+.comp-muted { color: var(--muted); font-size: .85rem; }
+.comp-header { align-items: flex-end; }
+.comp-header p { margin-top: 6px; }
+.comp-small { min-height: 28px; padding: 0 9px; font-size: .8rem; }
+.comp-section-bar { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; margin-bottom: 12px; }
+.comp-section-bar h2 { font-size: 1rem; }
+.comp-section-bar > .zone-button { margin-left: auto; }
+.comp-empty { color: var(--muted); font-size: .88rem; }
+
+/* Nouvelle compilation */
+.comp-draft { padding: 16px 18px; margin-bottom: 28px; }
+.comp-draft-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 460px); gap: 18px 24px; align-items: start; }
+.comp-draft-list { display: grid; gap: 4px; max-height: 470px; margin: 0; padding: 0; overflow-y: auto; list-style: none; counter-reset: comp; }
+.comp-draft-list li {
+  display: grid; grid-template-columns: 22px 72px minmax(0, 1fr) auto; align-items: center; gap: 10px;
+  padding: 5px 6px; border-radius: 8px; counter-increment: comp;
+}
+.comp-draft-list li:hover { background: var(--hover); }
+.comp-draft-list li::before { content: counter(comp); color: var(--muted); font-size: .8rem; font-variant-numeric: tabular-nums; text-align: right; }
+.comp-draft-list img { width: 72px; aspect-ratio: 16 / 9; border-radius: 5px; object-fit: cover; background: var(--raised); }
+.comp-draft-list strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .9rem; }
+.comp-draft-list small { display: block; overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; font-size: .78rem; }
+.comp-draft-list small::before { content: ""; display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; background: var(--tint, var(--muted)); vertical-align: 1px; }
+.comp-item-actions { display: flex; gap: 3px; }
+.comp-item-actions .zone-button { width: 28px; min-height: 28px; padding: 0; font-size: .8rem; }
+
+.comp-caption { display: grid; gap: 6px; }
+.comp-caption-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-weight: 600; font-size: .88rem; }
+.comp-caption-heading span { display: flex; gap: 6px; }
+.comp-page textarea {
+  width: 100%; resize: vertical; padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--surface); color: inherit; font: inherit; font-size: .84rem; line-height: 1.45;
+}
+.comp-page textarea:focus-visible, .comp-page input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.comp-hint { color: var(--muted); font-size: .76rem; }
+.comp-actions { display: flex; gap: 8px; margin-top: 6px; }
+.comp-start { flex: 1; min-height: 40px; }
+.comp-status { color: var(--muted); font-size: .84rem; overflow-wrap: anywhere; }
+.comp-status:empty { display: none; }
+.comp-status.is-error { color: var(--danger); }
+
+/* Historique */
+.comp-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 16px; margin: 0; padding: 0; list-style: none; }
+.comp-card { display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--line-soft); border-radius: 12px; background: var(--panel); }
+.comp-card.is-new { border-color: var(--accent-line); box-shadow: 0 0 0 1px var(--accent-line); }
+.comp-poster { position: relative; display: block; width: 100%; aspect-ratio: 9 / 16; max-height: 420px; padding: 0; border: 0; background: #08080a; cursor: pointer; }
+.comp-poster img, .comp-card video { display: block; width: 100%; height: 100%; object-fit: contain; background: #08080a; }
+.comp-card video { aspect-ratio: 9 / 16; max-height: 420px; }
+.comp-play {
+  position: absolute; top: 50%; left: 50%; display: grid; place-items: center; width: 54px; height: 54px; margin: -27px 0 0 -27px;
+  border-radius: 50%; background: #000000a8; color: #fff; font-size: 1.2rem; transition: transform .15s;
+}
+.comp-poster:hover .comp-play, .comp-poster:focus-visible .comp-play { transform: scale(1.1); background: var(--accent); color: var(--accent-ink); }
+.comp-duration { position: absolute; right: 8px; bottom: 8px; padding: 1px 6px; border-radius: 4px; background: #000000b8; color: #fff; font-size: .75rem; font-variant-numeric: tabular-nums; }
+.comp-duration:empty { display: none; }
+.comp-card-body { display: grid; gap: 8px; padding: 12px 14px 14px; }
+.comp-title { margin: 0; font-size: .92rem; font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
+.comp-meta { font-size: .78rem; }
+
+.comp-links { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.comp-link { display: flex; align-items: center; gap: 6px; min-height: 30px; }
+.comp-link-name { flex: none; width: 62px; color: var(--soft); font-size: .8rem; font-weight: 600; }
+.comp-link a { flex: 1; min-width: 0; overflow: hidden; color: var(--accent-text); font-size: .8rem; text-overflow: ellipsis; white-space: nowrap; }
+.comp-link input {
+  flex: 1; min-width: 0; min-height: 28px; padding: 3px 8px; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--surface); color: inherit; font: inherit; font-size: .8rem;
+}
+.comp-link .zone-button { flex: none; }
+.comp-link-missing { flex: 1; color: var(--faint); font-size: .8rem; }
+
+.comp-details summary { color: var(--soft); font-size: .82rem; cursor: pointer; }
+.comp-details[open] summary { margin-bottom: 6px; }
+.comp-card-description-actions, .comp-card-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.comp-card-description-actions { margin-top: 6px; }
+.comp-card-delete:hover:enabled { border-color: #4a2a2a; background: #241618; color: var(--danger); }
+.comp-card-status { font-size: .78rem; overflow-wrap: anywhere; }
+.comp-card-status:empty { display: none; }
+.comp-card-status.is-error { color: var(--danger); }
+
+@media (max-width: 900px) {
+  .comp-draft-body { grid-template-columns: minmax(0, 1fr); }
+}
+
+.comp-account { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin-left: auto; padding: 4px 6px 4px 10px; border: 1px solid var(--line-soft); border-radius: 8px; }
+.comp-account-name { font-size: .8rem; font-weight: 600; color: var(--soft); }
+.comp-account.is-error #comp-youtube-state { color: var(--danger); }
+.comp-card-youtube:enabled { border-color: var(--accent-line); color: var(--accent-text); }
+.comp-card-body, .comp-links { grid-template-columns: minmax(0, 1fr); }
+.comp-link-missing { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -301,6 +301,7 @@ function route() {
     const params = new URLSearchParams(location.search);
     if (params.get("view") === "players") return "/players/index.html";
     if (params.get("view") === "replay") return "/replay/index.html";
+    if (params.get("view") === "compilations") return "/compilations/index.html";
     const galleryId = params.get("gallery");
     const exportPath = galleryId && /^[\w-]+$/.test(galleryId) ? `/exports/${galleryId}/index.html` : null;
     if (["export", "galleries"].includes(params.get("view")) || (!exportPath && libraryAvailable === false)) return null;
@@ -317,6 +318,11 @@ function setAddress(search, replace = false) {
 
 window.utilityNavigation = {
     search: () => location.search,
+    openLibrary: () => openLibrary(),
+    openCompilations() {
+        setAddress("view=compilations");
+        renderRoute(true);
+    },
     updateReplay(search, replace) {
         if (closed || route() !== "/replay/index.html") return;
         const params = new URLSearchParams(search);
@@ -358,12 +364,14 @@ function renderRoute(focus = false, refresh = false) {
     const library = path.startsWith("/library/");
     const players = path === "/players/index.html";
     const replays = path === "/replay/index.html";
+    const compilations = path === "/compilations/index.html";
     if (library) lastLibrarySearch = location.search.slice(1);
     if (players) lastPlayerSearch = location.search.slice(1);
     if (replays) lastReplaySearch = location.search.slice(1);
-    gallery.title = players ? "Carte des positions des joueurs" : replays ? "Replays des rounds" : "Radar et clips";
+    gallery.title = players ? "Carte des positions des joueurs" : replays ? "Replays des rounds"
+        : compilations ? "Compilations 9:16" : "Radar et clips";
     byId("gallery-view").setAttribute("aria-label",
-        players ? "Positions des joueurs" : replays ? "Replays" : "Galerie de clips");
+        players ? "Positions des joueurs" : replays ? "Replays" : compilations ? "Compilations" : "Galerie de clips");
     if (galleryPath !== path || refresh) {
         galleryPath = path;
         // The top-level URL owns history. Replacing the frame avoids extra Back steps.
@@ -377,8 +385,9 @@ function renderRoute(focus = false, refresh = false) {
     }
     home.hidden = true;
     byId("gallery-view").hidden = false;
-    updateNavigation(players ? "players" : replays ? "replays" : library ? "library" : "gallery");
-    if (focus) byId(players ? "players-link" : replays ? "replays-link" : "library-link").focus();
+    const section = players ? "players" : replays ? "replays" : compilations ? "compilations" : library ? "library" : "gallery";
+    updateNavigation(section);
+    if (focus) byId(`${section === "gallery" ? "library" : section}-link`).focus();
 }
 
 function openLibrary(exportId, focus = true) {
@@ -414,13 +423,14 @@ function showHome(focus = true) {
 
 function updateNavigation(section) {
     document.body.dataset.view = section;
-    const active = {library: "library-link", players: "players-link", replays: "replays-link", export: "back",
-        galleries: "galleries-link", gallery: "galleries-link"}[section];
-    for (const id of ["library-link", "players-link", "replays-link", "back", "galleries-link"]) {
+    const active = {library: "library-link", players: "players-link", replays: "replays-link",
+        compilations: "compilations-link", export: "back", galleries: "galleries-link", gallery: "galleries-link"}[section];
+    for (const id of ["library-link", "players-link", "replays-link", "compilations-link", "back", "galleries-link"]) {
         if (id === active) byId(id).setAttribute("aria-current", "page");
         else byId(id).removeAttribute("aria-current");
     }
-    byId("route-label").textContent = {library: "Vidéothèque", players: "Joueurs", replays: "Replays", export: "Importation",
+    byId("route-label").textContent = {library: "Vidéothèque", players: "Joueurs", replays: "Replays",
+        compilations: "Compilations", export: "Importation",
         galleries: "Galeries", gallery: "Galerie"}[section];
     byId("route-action").textContent = section === "export" ? "Ouvrir la vidéothèque" : "Importer une démo";
     byId("route-action").disabled = section === "export" && !libraryAvailable;
@@ -538,6 +548,7 @@ byId("replays-link").addEventListener("click", () => {
     setAddress(lastReplaySearch);
     renderRoute(true);
 });
+byId("compilations-link").addEventListener("click", () => window.utilityNavigation.openCompilations());
 byId("callouts-link").addEventListener("click", openCallouts);
 byId("galleries-link").addEventListener("click", () => {
     setAddress("view=galleries");

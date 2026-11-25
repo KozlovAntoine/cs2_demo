@@ -29,3 +29,6 @@ Desktop.ini
 *.7z
 *.zip
 *.log
+
+# Private setup notes (contain account e-mails)
+/docs/publication-journal.md

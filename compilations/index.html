@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Compilations · Utilitaires CS2</title>
+  <link rel="stylesheet" href="/library/gallery.css">
+  <link rel="stylesheet" href="/compilations/compilations.css">
+  <script defer src="/library/callouts.js"></script>
+  <script defer src="/library/compilation.js"></script>
+  <script defer src="/compilations/compilations.js"></script>
+</head>
+<body>
+  <main class="comp-page">
+    <header class="comp-header">
+      <div>
+        <h1>Compilations</h1>
+        <p class="comp-muted">Vidéos 9:16 pour TikTok, Instagram Reels et YouTube Shorts.</p>
+      </div>
+      <button id="comp-pick" class="zone-button" type="button">＋ Choisir des clips dans la vidéothèque</button>
+    </header>
+
+    <section class="panel comp-draft" aria-labelledby="comp-draft-title">
+      <div class="comp-section-bar">
+        <h2 id="comp-draft-title">Nouvelle compilation</h2>
+        <span id="comp-draft-count" class="comp-muted"></span>
+        <button id="comp-clear" class="zone-button comp-small" type="button">Vider</button>
+      </div>
+      <p id="comp-draft-empty" class="comp-empty">Aucun clip sélectionné. Dans la vidéothèque, active « Compilation 9:16 »
+        puis ajoute des clips avec « + Compilation » (touche C) ou par score.</p>
+      <div id="comp-draft-body" class="comp-draft-body">
+        <ol id="comp-draft-list" class="comp-draft-list" aria-label="Clips de la nouvelle compilation"></ol>
+        <div class="comp-caption">
+          <div class="comp-caption-heading">
+            <label for="comp-description">Description</label>
+            <span>
+              <button id="comp-description-reset" class="zone-button comp-small" type="button"
+                title="Réécrire la description à partir de la liste">Régénérer</button>
+              <button id="comp-description-copy" class="zone-button comp-small" type="button">Copier</button>
+            </span>
+          </div>
+          <textarea id="comp-description" rows="12" maxlength="2200" spellcheck="false"></textarea>
+          <p class="comp-hint"><span id="comp-description-length"></span> · La 1<sup>re</sup> ligne sert de titre YouTube.</p>
+          <div class="comp-actions">
+            <button id="comp-start" class="primary-button comp-start" type="button">Générer la compilation</button>
+          </div>
+          <p id="comp-status" class="comp-status" role="status"></p>
+        </div>
+      </div>
+    </section>
+
+    <section class="comp-history" aria-labelledby="comp-history-title">
+      <div class="comp-section-bar">
+        <h2 id="comp-history-title">Compilations générées</h2>
+        <span id="comp-history-summary" class="comp-muted"></span>
+        <div id="comp-youtube" class="comp-account" aria-live="polite">
+          <span class="comp-account-name">YouTube</span>
+          <span id="comp-youtube-state" class="comp-muted">…</span>
+          <button id="comp-youtube-connect" class="zone-button comp-small" type="button" hidden>Connecter</button>
+          <button id="comp-youtube-disconnect" class="zone-button comp-small" type="button" hidden>Déconnecter</button>
+        </div>
+      </div>
+      <p id="comp-history-status" class="comp-muted" role="status">Chargement…</p>
+      <ul id="comp-grid" class="comp-grid" aria-labelledby="comp-history-title"></ul>
+    </section>
+  </main>
+
+  <template id="comp-card-template">
+    <li class="comp-card">
+      <button class="comp-poster" type="button"><img alt="" loading="lazy"><span class="comp-play" aria-hidden="true">▶</span>
+        <span class="comp-duration"></span></button>
+      <div class="comp-card-body">
+        <h3 class="comp-title"></h3>
+        <p class="comp-meta comp-muted"></p>
+        <ul class="comp-links"></ul>
+        <details class="comp-details">
+          <summary>Description</summary>
+          <textarea class="comp-card-description" rows="9" maxlength="2200" spellcheck="false"></textarea>
+          <div class="comp-card-description-actions">
+            <button class="zone-button comp-small comp-card-copy" type="button">Copier</button>
+            <button class="zone-button comp-small comp-card-save" type="button" disabled>Enregistrer</button>
+          </div>
+        </details>
+        <div class="comp-card-actions">
+          <button class="zone-button comp-small comp-card-youtube" type="button" hidden>Envoyer sur YouTube</button>
+          <button class="zone-button comp-small comp-card-folder" type="button">Afficher le fichier</button>
+          <button class="zone-button comp-small comp-card-delete" type="button">Supprimer</button>
+        </div>
+        <p class="comp-card-status comp-muted" role="status"></p>
+      </div>
+    </li>
+  </template>
+
+  <dialog id="comp-dialog">
+    <form method="dialog">
+      <h2>Supprimer cette compilation ?</h2>
+      <p id="comp-dialog-text"></p>
+      <div class="dialog-actions">
+        <button value="cancel" type="submit">Annuler</button>
+        <button value="confirm" class="delete-clip" type="submit">Supprimer</button>
+      </div>
+    </form>
+  </dialog>
+</body>
+</html>

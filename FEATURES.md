@@ -44,6 +44,9 @@ CS2 Utilities is a local, browser-based application for turning Counter-Strike 2
 - Optionally end each clip in the victim's point of view: the most blinded enemy for a flash, the most damaged for an HE or incendiary, otherwise the nearest living enemy.
 - Capture new clips in 1080p or 720p.
 - Build a 1080 × 1920 compilation from the clips shown in the library, ordered by score or by the list: full game frame over a blurred background, with map, utility, callout, thrower, team, throw inputs, and a POV badge.
+- Manage compilations on a dedicated **Compilations** page: the current selection with its order, post text and generation progress, then every generated video with a poster, playback, date, clip count, duration and size. Store each video's YouTube and TikTok links, edit or copy its post text, show the file in Explorer, or delete it after confirmation.
+- Connect a YouTube channel and upload a compilation as a private Short from its history card; the Short's link is saved automatically. For TikTok and Instagram, **Publier ↗** copies the post text, opens the platform's upload page and shows the video in Explorer.
+- Write the post for TikTok, Instagram Reels and YouTube Shorts alongside the compilation: an English title line, one line per clip with its map, callout, utility and player, and hashtags. The text follows the list until it is edited, can be copied, and is saved as a `.txt` next to the video.
 
 ## Round replays
 

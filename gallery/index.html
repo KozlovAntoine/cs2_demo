@@ -7,6 +7,7 @@
   <link rel="stylesheet" href="gallery.css">
   <script defer src="catalogue.js"></script>
   <script defer src="callouts.js"></script>
+  <script defer src="compilation.js"></script>
   <script defer src="gallery.js"></script>
 </head>
 <body>
@@ -177,9 +178,21 @@
           </div>
           <ol id="compilation-list" class="compilation-list" aria-label="Clips de la compilation"></ol>
           <p id="compilation-empty" class="compilation-empty">Ajoute le clip affiché avec « + Compilation » sous la vidéo (touche C), ou préremplis la liste par score.</p>
+          <div class="compilation-caption">
+            <div class="compilation-caption-heading">
+              <label for="compilation-description">Description</label>
+              <span>
+                <button id="compilation-description-reset" class="zone-button" type="button" title="Réécrire la description à partir de la liste">Régénérer</button>
+                <button id="compilation-description-copy" class="zone-button" type="button">Copier</button>
+              </span>
+            </div>
+            <textarea id="compilation-description" rows="9" maxlength="2200" spellcheck="false"></textarea>
+            <p class="compilation-caption-hint"><span id="compilation-description-length"></span> · La 1<sup>re</sup> ligne sert de titre YouTube. Enregistrée en .txt à côté de la vidéo.</p>
+          </div>
           <div class="compilation-actions">
             <button id="compilation-start" class="compilation-start" type="button">Générer la compilation</button>
             <button id="compilation-folder" class="zone-button" type="button" hidden>Ouvrir le dossier</button>
+            <button id="compilation-history" class="zone-button" type="button" hidden>Toutes les compilations →</button>
           </div>
           <p id="compilation-status" class="compilation-status" role="status"></p>
         </section>
