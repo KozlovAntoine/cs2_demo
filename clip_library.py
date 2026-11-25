@@ -3,8 +3,8 @@ import math
 import os
 import re
 import stat
+import threading
 from contextlib import suppress
-from functools import lru_cache
 from pathlib import Path
 from urllib.parse import quote
 from uuid import uuid4
@@ -22,6 +22,10 @@ CLIP_VIDEO = re.compile(r"clips/[\w-]+\.mp4")
 CLIP_FLAGS = ("favorite", "watched", "potentialDismissed")
 THROW_USAGE_PREFIX = ".throw-usage-"
 FAVORITE_SUGGESTIONS = ".potential-favorites.json"
+SUMMARY_CACHE_FOLDER = ".library-cache"
+SUMMARY_CACHE_VERSION = 1
+_summary_lock = threading.Lock()
+_folder_summaries = {}
 
 
 def export_url(folder):
@@ -156,35 +160,95 @@ def throw_usage_summary(usage):
     return summary
 
 
-@lru_cache(maxsize=16384)
-def cached_throw_usage_summary(path, _version):
-    return throw_usage_summary(load_throw_usage(path))
+def summary_cache_path(folder):
+    return folder.parent / SUMMARY_CACHE_FOLDER / f"{folder.name}.json"
+
+
+def read_summary_cache(path):
+    try:
+        if path.resolve() != path:
+            return {}
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(data, dict) or data.get("version") != SUMMARY_CACHE_VERSION or not isinstance(data.get("files"), dict):
+        return {}
+    return data["files"]
+
+
+def write_summary_cache(path, files):
+    temporary = path.with_name(f".{uuid4().hex}.tmp")
+    try:
+        path.parent.mkdir(exist_ok=True)
+        if path.parent.resolve() != path.parent:
+            return
+        temporary.write_text(json.dumps({"version": SUMMARY_CACHE_VERSION, "files": files}, ensure_ascii=True,
+                                        separators=(",", ":")), encoding="utf-8")
+        temporary.replace(path)
+    except OSError:
+        pass
+    finally:
+        with suppress(OSError):
+            temporary.unlink(missing_ok=True)
+
+
+def cached_record(record, version):
+    return (isinstance(record, list) and len(record) == 2 and record[0] == version and isinstance(record[1], dict)
+            and isinstance(record[1].get("usage"), dict))
 
 
 def throw_usage_summaries(folder):
-    summaries = {}
-    with os.scandir(folder) as entries:
-        for entry in entries:
-            name = os.path.normcase(entry.name)
-            if not (name.startswith(THROW_USAGE_PREFIX) and name.endswith(".json")):
-                continue
-            try:
-                info = entry.stat(follow_symlinks=False)
-                reparse = getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
-                if stat.S_ISLNK(info.st_mode) or reparse:
-                    summary = throw_usage_summary(read_throw_usage(Path(entry.path)))
-                elif stat.S_ISREG(info.st_mode):
-                    # Exporters replace usage files atomically. Reuse counts only for the same file version.
-                    version = (info.st_mtime_ns, info.st_ctime_ns, info.st_size)
-                    summary = cached_throw_usage_summary(entry.path, version)
-                else:
-                    continue
-            except (OSError, ValueError):
-                continue
+    # Each clip has its own usage file, so reading them all again on start-up took seconds. Summaries are kept in
+    # memory and in one cache file per export, and are recomputed only for usage files that changed.
+    with _summary_lock:
+        known = _folder_summaries.get(folder, {})
+        files = {}
+        pending = []
+        summaries = {}
+
+        def add(name, summary):
             if summary["usage"]["demos"]:
-                filename = name.removeprefix(THROW_USAGE_PREFIX).removesuffix(".json")
-                summaries[filename] = summary
-    return summaries
+                summaries[name.removeprefix(THROW_USAGE_PREFIX).removesuffix(".json")] = summary
+
+        with os.scandir(folder) as entries:
+            for entry in entries:
+                name = os.path.normcase(entry.name)
+                if not (name.startswith(THROW_USAGE_PREFIX) and name.endswith(".json")):
+                    continue
+                try:
+                    info = entry.stat(follow_symlinks=False)
+                    reparse = getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
+                    if stat.S_ISLNK(info.st_mode) or reparse:
+                        add(name, throw_usage_summary(read_throw_usage(Path(entry.path))))
+                    elif stat.S_ISREG(info.st_mode):
+                        # Exporters replace usage files atomically. Reuse counts only for the same file version.
+                        version = [info.st_mtime_ns, info.st_ctime_ns, info.st_size]
+                        if cached_record(record := known.get(name), version):
+                            files[name] = record
+                            add(name, record[1])
+                        else:
+                            pending.append((name, entry.path, version))
+                except (OSError, ValueError):
+                    continue
+
+        if pending:
+            cache = summary_cache_path(folder)
+            stored = read_summary_cache(cache)
+            changed = False
+            for name, path, version in pending:
+                record = stored.get(name)
+                if not cached_record(record, version):
+                    try:
+                        record = [version, throw_usage_summary(load_throw_usage(path))]
+                    except (OSError, ValueError):
+                        continue
+                    changed = True
+                files[name] = record
+                add(name, record[1])
+            if changed or stored.keys() != files.keys():
+                write_summary_cache(cache, files)
+        _folder_summaries[folder] = files
+        return summaries
 
 
 def throw_observations(occurrences):

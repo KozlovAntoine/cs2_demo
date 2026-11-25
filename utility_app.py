@@ -946,6 +946,14 @@ class Handler(BaseHTTPRequestHandler):
             pass
 
 
+def warm_library(output):
+    # Builds the clip summaries while the browser starts, so the first library request finds them ready.
+    try:
+        library_catalogue(output)
+    except Exception:
+        pass
+
+
 def serve(options):
     host = f"127.0.0.1:{options.port}"
     url = f"http://{host}"
@@ -966,6 +974,7 @@ def serve(options):
         server.host = f"127.0.0.1:{server.server_port}"
         server.url = f"http://{server.host}"
         server.app = App(options.output.resolve(), options.csdm)
+        threading.Thread(target=warm_library, args=(server.app.output,), daemon=True).start()
         if sys.stdout is not None:
             print(server.url, flush=True)
         if not options.no_open:

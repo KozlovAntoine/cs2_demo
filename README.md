@@ -31,6 +31,8 @@ python utility_app.py
 
 La **Vidéothèque** s’ouvre dans ton navigateur à l’adresse [http://127.0.0.1:38473](http://127.0.0.1:38473). Si le navigateur ne s’ouvre pas, saisis cette adresse manuellement. Utilise **Quitter** dans le site ou **Ctrl+C** dans le terminal pour arrêter le serveur.
 
+Un écran de chargement s’affiche jusqu’à ce que la première page soit prête. Le serveur prépare la vidéothèque dès son démarrage et garde un résumé des lancers de chaque export dans `exports/.library-cache/`. Ce cache se reconstruit tout seul : tu peux le supprimer sans perdre de données.
+
 Si CS Demo Manager est installé dans un dossier personnalisé, indique le dossier contenant `cs-demo-manager.exe` avec `--csdm`. L’exemple ci-dessous suppose que ce logiciel est dans un dossier voisin. Si le port par défaut est occupé, ajoute `--port 38474` et ouvre l’adresse affichée par la commande.
 
 ```powershell

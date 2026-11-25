@@ -81,7 +81,35 @@ body { display: grid; grid-template-columns: var(--rail-width) minmax(0, 1fr); m
 @keyframes pulse { 50% { opacity: .35; } }
 
 /* Barre du haut (masquée dans la vidéothèque, qui a son propre en-tête) */
-.app-content { min-width: 0; }
+.app-content { position: relative; min-width: 0; }
+
+/* Écran de démarrage : couvre le contenu jusqu'à ce que la première page soit prête. */
+.app-loading {
+  position: absolute; inset: 0; z-index: 5; display: grid; place-items: center; padding: 24px;
+  background: var(--bg); transition: opacity .22s ease;
+}
+.app-loading.is-done { opacity: 0; pointer-events: none; }
+.loading-card { display: grid; justify-items: center; gap: 10px; max-width: 340px; text-align: center; }
+.loading-mark {
+  display: grid; place-items: center; width: 46px; height: 46px; margin-bottom: 4px; border-radius: 12px;
+  background: var(--gold); color: var(--accent-ink); font-weight: 700; font-size: 17px; letter-spacing: -.02em;
+  animation: loading-breathe 2.4s ease-in-out infinite;
+}
+.loading-title { color: var(--text); font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
+.loading-track { position: relative; width: 168px; height: 3px; margin: 8px 0 4px; overflow: hidden; border-radius: 3px; background: var(--edge); }
+.loading-track span {
+  position: absolute; inset: 0 auto 0 0; width: 40%; border-radius: inherit; background: var(--gold);
+  animation: loading-slide 1.15s cubic-bezier(.45, 0, .25, 1) infinite;
+}
+#loading-label { color: var(--soft); font-size: 13px; }
+#loading-detail { color: var(--muted); font-size: 12px; line-height: 1.5; }
+@keyframes loading-slide { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
+@keyframes loading-breathe { 50% { transform: scale(.94); opacity: .82; } }
+@media (prefers-reduced-motion: reduce) {
+  .app-loading { transition: none; }
+  .loading-mark { animation: none; }
+  .loading-track span { left: 30%; animation: none; }
+}
 .app-bar {
   min-height: var(--bar-height); display: flex; justify-content: space-between; align-items: center; gap: 12px;
   padding: 10px 20px; border-bottom: 1px solid var(--divider);

@@ -50,7 +50,16 @@
       </button>
     </div>
   </aside>
-  <div class="app-content">
+  <div class="app-content" aria-busy="true">
+    <div id="app-loading" class="app-loading">
+      <div class="loading-card" role="status" aria-live="polite">
+        <div class="loading-mark" aria-hidden="true">U</div>
+        <p class="loading-title">Utilitaires CS2</p>
+        <div class="loading-track" aria-hidden="true"><span></span></div>
+        <p id="loading-label">Connexion à l’application…</p>
+        <p id="loading-detail" hidden>Une grande vidéothèque peut prendre quelques secondes à préparer au premier lancement.</p>
+      </div>
+    </div>
     <header class="app-bar">
       <div class="breadcrumb"><strong id="route-label">Vidéothèque</strong></div>
       <button class="primary" id="route-action" type="button">Importer une démo</button>

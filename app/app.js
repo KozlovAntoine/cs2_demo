@@ -37,6 +37,35 @@ const queueLabels = {
     skipped: "Sans nouveau clip", cancelled: "Annulée", error: "En erreur", paused: "En pause", cancelling: "Annulation en cours",
 };
 const activeQueueStates = new Set(["analysis", "starting", "capture", "generating", "publishing"]);
+const loading = byId("app-loading");
+const loadingLabels = {
+    "/library/index.html": "Chargement de la vidéothèque…", "/players/index.html": "Chargement des joueurs…",
+    "/replay/index.html": "Chargement des replays…", "/compilations/index.html": "Chargement des compilations…",
+};
+// The library builds its catalogue on the first visit. Explain the wait only when it lasts.
+const slowLoadingTimer = setTimeout(() => { byId("loading-detail").hidden = false; }, 4000);
+let frameReadyTimer;
+
+function waitForFrame(label) {
+    byId("loading-label").textContent = label;
+    // The frame's load event also waits for clip thumbnails. Its page is usable once its deferred scripts have run.
+    clearInterval(frameReadyTimer);
+    frameReadyTimer = setInterval(() => {
+        const page = gallery.contentDocument;
+        if (!page || page.URL === "about:blank" || new URL(page.URL).pathname !== galleryPath) return;
+        if (page.defaultView?.performance.getEntriesByType("navigation")[0]?.domContentLoadedEventEnd > 0) finishLoading();
+    }, 50);
+}
+
+function finishLoading() {
+    if (loading.classList.contains("is-done")) return;
+    clearTimeout(slowLoadingTimer);
+    clearInterval(frameReadyTimer);
+    loading.classList.add("is-done");
+    loading.parentElement.removeAttribute("aria-busy");
+    const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    setTimeout(() => { loading.hidden = true; }, reducedMotion ? 0 : 240);
+}
 
 async function request(path, payload) {
     const options = payload === undefined ? undefined : {
@@ -374,6 +403,7 @@ function renderRoute(focus = false, refresh = false) {
         players ? "Positions des joueurs" : replays ? "Replays" : compilations ? "Compilations" : "Galerie de clips");
     if (galleryPath !== path || refresh) {
         galleryPath = path;
+        if (!loading.classList.contains("is-done")) waitForFrame(loadingLabels[path] ?? "Chargement de la galerie…");
         // The top-level URL owns history. Replacing the frame avoids extra Back steps.
         gallery.contentWindow.location.replace(path);
     } else if (library) {
@@ -408,6 +438,7 @@ function openGallery(url) {
 }
 
 function showHome(focus = true) {
+    finishLoading();
     openCalloutsAfterLoad = false;
     byId("gallery-view").hidden = true;
     home.hidden = false;
@@ -565,6 +596,7 @@ document.addEventListener("keydown", (event) => {
     }
 });
 gallery.addEventListener("load", () => {
+    if (galleryPath && gallery.contentDocument?.URL !== "about:blank") finishLoading();
     if (openCalloutsAfterLoad && galleryPath === "/library/index.html" && !byId("gallery-view").hidden) {
         const button = gallery.contentDocument?.getElementById("edit-callouts");
         if (button && !button.hidden) {
