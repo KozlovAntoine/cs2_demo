@@ -22,14 +22,49 @@ def compilation_folder(output):
 
 
 def compilation_video(output, name):
-    """The video of a compilation, only by its bare name inside the compilations folder."""
-    if not isinstance(name, str) or not name.endswith(".mp4") or Path(name).name != name:
+    """The video of a compilation by its bare name: in its own folder, or loose in the compilations folder."""
+    if not isinstance(name, str) or not name.endswith(".mp4") or Path(name).name != name or name.startswith("."):
         raise ValueError("Compilation introuvable.")
     folder = compilation_folder(output).resolve()
-    video = (folder / name).resolve()
-    if video.parent != folder or not video.is_file():
-        raise ValueError("Compilation introuvable.")
-    return video
+    for video in (folder / Path(name).stem / name, folder / name):
+        video = video.resolve()
+        if video.parent in (folder, folder / Path(name).stem) and video.is_file():
+            return video
+    raise ValueError("Compilation introuvable.")
+
+
+def sidecars(video):
+    return video.with_suffix(".json"), video.with_suffix(".txt")
+
+
+def move_into_folders(folder):
+    """Compilations made before the folders existed: each video and its files move into a folder of its name."""
+    for video in folder.glob("*.mp4"):
+        target = folder / video.stem
+        if target.exists():
+            continue
+        try:
+            target.mkdir()
+            video.replace(target / video.name)
+            for file in sidecars(video):
+                if file.is_file():
+                    file.replace(target / file.name)
+        except OSError:
+            # The video may be open in a player: it stays where it is and is moved on a later visit.
+            if not (target / video.name).exists():
+                try:
+                    target.rmdir()
+                except OSError:
+                    pass
+
+
+def compilation_videos(folder):
+    for directory in folder.iterdir():
+        if directory.is_dir() and not directory.name.startswith("."):
+            video = directory / f"{directory.name}.mp4"
+            if video.is_file():
+                yield video
+    yield from folder.glob("*.mp4")
 
 
 def read_meta(video):
@@ -69,9 +104,10 @@ def list_compilations(output):
     folder = compilation_folder(output)
     if not folder.is_dir():
         return []
+    move_into_folders(folder)
     ffprobe = None
     items = []
-    for video in folder.glob("*.mp4"):
+    for video in compilation_videos(folder):
         meta = read_meta(video)
         if not isinstance(meta.get("duration"), (int, float)):
             # Compilations made before the history existed: measure them once and keep the result.
@@ -89,7 +125,8 @@ def list_compilations(output):
 def compilation_thumbnail(output, stem):
     """A 9:16 poster taken 1.5 s into the video, made the first time it is asked for."""
     video = compilation_video(output, f"{stem}.mp4")
-    folder = video.parent / THUMBNAIL_FOLDER
+    # Kept apart so that each compilation folder only holds what is worth opening.
+    folder = compilation_folder(output) / THUMBNAIL_FOLDER
     thumbnail = folder / f"{video.stem}.jpg"
     if thumbnail.is_file() and thumbnail.stat().st_mtime >= video.stat().st_mtime:
         return thumbnail
@@ -166,7 +203,12 @@ def delete_compilation(output, name):
         video.unlink()
     except PermissionError as error:
         raise ValueError("La vidéo est ouverte dans un autre programme. Ferme-la puis réessaie.") from error
-    for file in (video.with_suffix(".json"), video.with_suffix(".txt"),
-                 video.parent / THUMBNAIL_FOLDER / f"{video.stem}.jpg"):
+    for file in (*sidecars(video), compilation_folder(output) / THUMBNAIL_FOLDER / f"{video.stem}.jpg"):
         file.unlink(missing_ok=True)
+    if video.parent.name == video.stem:
+        # Files added by hand stay, with their folder.
+        try:
+            video.parent.rmdir()
+        except OSError:
+            pass
     return {"deleted": name}

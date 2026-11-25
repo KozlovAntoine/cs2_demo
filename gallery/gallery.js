@@ -2062,6 +2062,7 @@ function toggleCompilationClip(clip = selected) {
 function showCompilationJob(state) {
     byId("compilation-start").dataset.busy = String(Boolean(state?.busy));
     byId("compilation-folder").hidden = !state?.file;
+    byId("compilation-folder").dataset.file = state?.file ?? "";
     byId("compilation-status").textContent = state?.error ? state.error
         : state?.running ? state.phase || "Compilation en cours…"
         : state?.file ? `Terminé · ${state.file}`
@@ -2135,7 +2136,8 @@ byId("compilation-description-copy").addEventListener("click", async (event) => 
 });
 byId("compilation-folder").addEventListener("click", async () => {
     try {
-        await request("/api/open-compilations", {});
+        // Explorer opens the finished compilation's own folder, with the video selected.
+        await request("/api/open-compilations", { file: byId("compilation-folder").dataset.file || undefined });
     } catch (error) {
         byId("compilation-status").textContent = error.message;
     }

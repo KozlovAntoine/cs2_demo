@@ -240,6 +240,16 @@ def compilation_name(items):
     return f"Compilation {label} {len(items)} clips {datetime.now().strftime('%Y-%m-%d %H-%M')}.mp4"
 
 
+def compilation_target(folder, name):
+    """Each compilation gets its own folder, named like its video: video, post text and history entry."""
+    stem = Path(name).stem
+    candidate, number = stem, 2
+    while (folder / candidate).exists():
+        candidate, number = f"{stem} ({number})", number + 1
+    (folder / candidate).mkdir()
+    return folder / candidate / f"{candidate}.mp4"
+
+
 def generate_compilation(output, items, report, description=""):
     if not 1 <= len(items) <= MAX_CLIPS:
         raise ValueError(f"Choisis entre 1 et {MAX_CLIPS} clips.")
@@ -262,7 +272,7 @@ def generate_compilation(output, items, report, description=""):
             capture_output=True, encoding="utf-8", cwd=work)
         if not result.is_file() or not result.stat().st_size:
             raise ValueError("FFmpeg n’a pas assemblé la compilation.")
-        target = folder / compilation_name(items)
+        target = compilation_target(folder, compilation_name(items))
         shutil.move(result, target)
     if description:
         # Same name as the video, ready to paste on TikTok, Instagram or YouTube.
